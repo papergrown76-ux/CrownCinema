@@ -1,0 +1,9 @@
+{
+  "name": "crown-cinema-protocol-smoke",
+  "private": true,
+  "version": "0.1.0",
+  "dependencies": {
+    "minecraft-data": "3.117.0",
+    "minecraft-protocol": "1.68.0"
+  }
+}

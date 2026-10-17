@@ -1,0 +1,187 @@
+package de.crown.cinema;
+
+import com.velocitypowered.api.event.ResultedEvent;
+import com.velocitypowered.api.event.player.PlayerResourcePackStatusEvent;
+import com.velocitypowered.api.event.player.ServerResourcePackRemoveEvent;
+import com.velocitypowered.api.event.player.ServerResourcePackSendEvent;
+import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.proxy.ProxyServer;
+import com.velocitypowered.api.proxy.player.ResourcePackInfo;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+
+final class PackService {
+    static final UUID PACK_ID = UUID.fromString("43e702b4-74f4-465a-8f40-d48b901d5638");
+    private final ClientPolicy policy;
+    private final ProxyServer proxy;
+    private final CinemaConfig config;
+    private final PackPreferences preferences;
+    private final byte[] digest;
+    private final Set<UUID> offered = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, PlayerResourcePackStatusEvent.Status> states = new ConcurrentHashMap<>();
+    private final String hash;
+    private final java.util.function.Consumer<Player> retryOffer;
+    private final Map<UUID, Map<UUID, com.velocitypowered.api.proxy.ServerConnection>> backendOffers = new ConcurrentHashMap<>();
+    private final Map<UUID, String> backendStates = new ConcurrentHashMap<>();
+    private final Map<UUID, Set<UUID>> knownBackendPacks = new ConcurrentHashMap<>();
+
+    PackService(ProxyServer proxy, CinemaConfig config, ClientPolicy policy, Path directory) throws IOException {
+        this(proxy, config, policy, directory, player -> { });
+    }
+
+    PackService(ProxyServer proxy, CinemaConfig config, ClientPolicy policy, Path directory,
+                java.util.function.Consumer<Player> retryOffer) throws IOException {
+        this(proxy, config, policy, directory, retryOffer, null);
+    }
+
+    PackService(ProxyServer proxy, CinemaConfig config, ClientPolicy policy, Path directory,
+                java.util.function.Consumer<Player> retryOffer, Path importedPack) throws IOException {
+        this.policy = policy;
+        this.proxy = proxy;
+        this.config = config;
+        this.retryOffer = retryOffer;
+        this.preferences = new PackPreferences(directory);
+        Path pack = directory.resolve("crown-cinema.zip");
+        byte[] data;
+        try (InputStream in = importedPack == null ? PackService.class.getResourceAsStream("/cinema/crown-cinema.zip") : Files.newInputStream(importedPack)) {
+            if (in == null) throw new IOException("Missing cinema resource pack");
+            data = in.readAllBytes();
+        }
+        // This is a generated output, separate from the editable configuration.
+        Files.write(pack, data);
+        try { digest = MessageDigest.getInstance("SHA-1").digest(data); }
+        catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
+        hash = HexFormat.of().formatHex(digest);
+    }
+
+    boolean configured() { return config.packUrl() != null || config.httpEnabled(); }
+    String hash() { return hash; }
+
+    void offer(Player player) {
+        if (!configured() || !policy.supports(player.getProtocolVersion()) || !player.isActive()
+                || preference(player) == PackPreferences.Choice.OFF) return;
+        var url = config.packUrlFor(player.getVirtualHost().map(address -> address.getHostString()).orElse(null));
+        if (url == null) return;
+        if (owns(player)) return;
+        // Backend pack managers must finish their reload before our optional
+        // pack starts another reload. Do not interrupt their pending requests.
+        if (!backendOffers.getOrDefault(player.getUniqueId(), Map.of()).isEmpty()
+                || player.getPendingResourcePacks().stream().anyMatch(p -> p.getOrigin() == ResourcePackInfo.Origin.DOWNSTREAM_SERVER)) {
+            retryOffer.accept(player); return;
+        }
+        if (!offered.add(player.getUniqueId())) return;
+        try {
+            var offer = proxy.createResourcePackBuilder(url.toASCIIString())
+                    .setId(PACK_ID).setHash(digest).setShouldForce(config.required())
+                    .setPrompt(Component.text("Crown Cinema - video cinematics")).build();
+            player.sendResourcePackOffer(offer);
+        }
+        catch (RuntimeException e) { offered.remove(player.getUniqueId()); throw e; }
+    }
+
+    boolean ready(Player player) {
+        return policy.supports(player.getProtocolVersion()) && player.getAppliedResourcePacks().stream()
+                .anyMatch(p -> p.getId().equals(PACK_ID));
+    }
+
+    private boolean owns(Player player) {
+        return ready(player) || player.getPendingResourcePacks().stream().anyMatch(p -> p.getId().equals(PACK_ID));
+    }
+
+    void status(PlayerResourcePackStatusEvent event) throws IOException {
+        UUID id = event.getPackId();
+        if (id == null && event.getPackInfo() != null) id = event.getPackInfo().getId();
+        if (!PACK_ID.equals(id)) {
+            var tracked = backendOffers.get(event.getPlayer().getUniqueId());
+            if (id != null && (knownBackendPacks.getOrDefault(event.getPlayer().getUniqueId(), Set.of()).contains(id)
+                    || event.getPackInfo() != null && event.getPackInfo().getOrigin() == ResourcePackInfo.Origin.DOWNSTREAM_SERVER)) {
+                backendStates.put(event.getPlayer().getUniqueId(), id + " " + event.getStatus());
+                if (!event.getStatus().isIntermediate()) {
+                    if (tracked != null) tracked.remove(id);
+                    retryOffer.accept(event.getPlayer());
+                }
+            }
+            return;
+        }
+        states.put(event.getPlayer().getUniqueId(), event.getStatus());
+        if (event.getStatus() == PlayerResourcePackStatusEvent.Status.ACCEPTED && offered.contains(event.getPlayer().getUniqueId()))
+            preferences.set(event.getPlayer().getUniqueId(), PackPreferences.Choice.ON);
+        else if (event.getStatus() == PlayerResourcePackStatusEvent.Status.DECLINED)
+            preferences.set(event.getPlayer().getUniqueId(), PackPreferences.Choice.OFF);
+        switch (event.getStatus()) {
+            case DECLINED, FAILED_DOWNLOAD, INVALID_URL, FAILED_RELOAD, DISCARDED ->
+                event.getPlayer().sendMessage(Component.text("Crown-Animationen sind ohne geladenes Resource Pack disabled. Du kannst normal weiterspielen.", NamedTextColor.YELLOW));
+            default -> { }
+        }
+    }
+
+    PackPreferences.Choice preference(Player player) { return preferences.get(player.getUniqueId()); }
+
+    void preference(Player player, PackPreferences.Choice choice) throws IOException {
+        preferences.set(player.getUniqueId(), choice);
+        offered.remove(player.getUniqueId());
+        if (choice == PackPreferences.Choice.OFF) {
+            if (owns(player)) player.removeResourcePacks(PACK_ID);
+        } else offer(player);
+    }
+
+    void protect(ServerResourcePackRemoveEvent event) {
+        Player player = event.getServerConnection().getPlayer();
+        if (!policy.supports(player.getProtocolVersion()) || !event.getResult().isAllowed()) return;
+        if (PACK_ID.equals(event.getPackId()) && owns(player)) {
+            event.setResult(ResultedEvent.GenericResult.denied());
+        } else if (event.getPackId() == null) {
+            // Keep the backend's clear/reload transaction intact. Replacing it
+            // with our own removals also touched Nexo's pending pack requests.
+            // Velocity applies the clear after this event; restore only our pack
+            // later, once subsequent backend downloads have finished.
+            backendOffers.remove(player.getUniqueId());
+            offered.remove(player.getUniqueId());
+            states.remove(player.getUniqueId());
+            retryOffer.accept(player);
+        } else {
+            var tracked = backendOffers.get(player.getUniqueId());
+            if (tracked != null) tracked.remove(event.getPackId());
+        }
+    }
+
+    void backendOffer(ServerResourcePackSendEvent event) {
+        if (!event.getResult().isAllowed()) return;
+        Player player = event.getServerConnection().getPlayer();
+        if (!policy.supports(player.getProtocolVersion())) return;
+        var pack = event.getProvidedResourcePack();
+        knownBackendPacks.computeIfAbsent(player.getUniqueId(), key -> ConcurrentHashMap.newKeySet()).add(pack.getId());
+        backendOffers.computeIfAbsent(player.getUniqueId(), key -> new ConcurrentHashMap<>()).put(pack.getId(), event.getServerConnection());
+        backendStates.put(player.getUniqueId(), pack.getId() + " OFFERED");
+    }
+
+    void backendChanged(Player player) {
+        var tracked = backendOffers.get(player.getUniqueId());
+        if (tracked != null) tracked.values().removeIf(source -> player.getCurrentServer().orElse(null) != source);
+    }
+
+    void forget(Player player) {
+        offered.remove(player.getUniqueId()); states.remove(player.getUniqueId());
+        backendOffers.remove(player.getUniqueId()); backendStates.remove(player.getUniqueId());
+        knownBackendPacks.remove(player.getUniqueId());
+    }
+    String backendStatusOf(Player player) {
+        return "applied=" + player.getAppliedResourcePacks().stream().filter(p -> p.getOrigin() == ResourcePackInfo.Origin.DOWNSTREAM_SERVER).count()
+                + ", pending=" + backendOffers.getOrDefault(player.getUniqueId(), Map.of()).size()
+                + ", last=" + backendStates.getOrDefault(player.getUniqueId(), "no response");
+    }
+    String statusOf(Player player) {
+        return ready(player) ? "applied" : states.getOrDefault(player.getUniqueId(), PlayerResourcePackStatusEvent.Status.DISCARDED).name();
+    }
+}

@@ -1,0 +1,14 @@
+name: CrownCinemaBackend
+version: 0.6.0
+main: de.crown.cinema.backend.CrownCinemaBackend
+api-version: '1.20'
+description: Optional backend protection and cinema room for Crown Cinema on Velocity.
+authors: [Papergrown]
+commands:
+  crownbackend:
+    description: Return from a cinema session or inspect recovery state.
+    usage: /crownbackend leave | status [player] | recover [player]
+permissions:
+  crowncinema.backend.admin:
+    description: Inspect and restore cinema players on this backend.
+    default: op

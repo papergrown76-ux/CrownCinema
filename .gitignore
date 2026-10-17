@@ -1,0 +1,9 @@
+/target/
+**/target/
+/build/
+/dist/
+/.tools/
+/.deps/
+*.log
+__pycache__/
+node_modules/

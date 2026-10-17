@@ -1,0 +1,7 @@
+# Players damaged by or dealing damage to another player are skipped for this long.
+combat-cooldown-seconds: 15
+# Additional bridge action and recovery diagnostics in the backend console.
+debug: false
+# Additional PvP plugins can cancel CinemaPrepareEvent to reject playback.
+# This private void world is created only on backends where this plugin is installed.
+world-name: crown_cinema

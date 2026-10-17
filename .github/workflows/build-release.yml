@@ -1,0 +1,51 @@
+name: Build, test and publish compiled downloads
+on:
+  push:
+    branches: [main]
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Build and test both plugins
+        run: |
+          ./mvnw -B -ntp verify
+          ./mvnw -f backend-bridge/pom.xml -B -ntp verify
+          npm --prefix tools/smoke ci --cache build/npm-cache --no-audit --no-fund
+      - name: Test Velocity pack and command behavior
+        run: NODE_PATH="$PWD/tools/smoke/node_modules" node tools/protocol-smoke.cjs
+      - name: Test real Paper bridge and recovery
+        run: NODE_PATH="$PWD/tools/smoke/node_modules" node tools/real-bridge-smoke.cjs
+      - name: Package the verified binaries
+        run: python3 tools/package-release.py
+  publish:
+    needs: verify
+    if: github.event_name == 'release'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Publish the checked-in verified downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python3 -c 'import os,xml.etree.ElementTree as E; v=E.parse("pom.xml").getroot().findtext("{http://maven.apache.org/POM/4.0.0}version"); assert os.environ["RELEASE_TAG"] == "v"+v, "Release tag must match pom.xml"'
+          cd downloads
+          sha256sum --check *.sha256
+          gh release upload "$RELEASE_TAG" *.jar *.zip *.sha256 --clobber
