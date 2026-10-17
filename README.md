@@ -128,7 +128,7 @@ Tests start loopback-only offline development servers. Never copy their configur
 
 Java tests exercise actual FFmpeg import with/without audio, cache validation, selection guards and debug rotation, plus command/pack/session/backend behavior. Integration tests run real Velocity/LimboAPI and a real Paper backend with protocol clients. **Pack application is simulated**; these tests do not render a game UI or perform a native 26.2/26.3 client login. To redraw the neutral demo, install FFmpeg and Pillow and run `python3 tools/generate-demo.py`; this is optional and not needed for normal builds. The official client-codec checker is optional: `python3 tools/validate-pack.py [pack.zip]`.
 
-GitHub Actions builds/tests source changes and publishes compiled JARs, the installation ZIP, matching FFmpeg source ZIP and checksums alongside a published release. The repository's `downloads/` directory also provides ready-made files when Actions is unavailable.
+GitHub Actions builds/tests source changes and publishes compiled JARs, the installation ZIP and matching FFmpeg source ZIP alongside a published release. Checksums are verified before uploading and kept in the repository. The repository's `downloads/` directory also provides ready-made files when Actions is unavailable.
 
 ## Upgrading and licensing
 

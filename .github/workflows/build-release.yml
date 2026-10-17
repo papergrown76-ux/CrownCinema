@@ -54,4 +54,4 @@ jobs:
           python3 -c 'import os,xml.etree.ElementTree as E; v=E.parse("pom.xml").getroot().findtext("{http://maven.apache.org/POM/4.0.0}version"); assert os.environ["RELEASE_TAG"] == "v"+v, "Release tag must match pom.xml"'
           cd downloads
           sha256sum --check *.sha256
-          gh release upload "$RELEASE_TAG" *.jar *.zip *.sha256 --clobber
+          gh release upload "$RELEASE_TAG" *.jar *.zip --clobber
