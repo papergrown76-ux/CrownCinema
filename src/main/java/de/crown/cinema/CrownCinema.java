@@ -157,11 +157,12 @@ public final class CrownCinema implements CinemaSession.Listener {
         if (running) try { packs.status(event); }
         catch (java.io.IOException e) { logger.error("Could not save resource-pack choice for {}", event.getPlayer().getUsername(), e); }
     }
-    @Subscribe(order = PostOrder.LAST) public void protectPack(ServerResourcePackRemoveEvent event) {
+    // Run on the firing thread: independent async pack callbacks can reverse clear/replace packets.
+    @Subscribe(order = PostOrder.LAST, async = false) public void protectPack(ServerResourcePackRemoveEvent event) {
         if (debug != null) debug.record("pack.remove", "player=" + event.getServerConnection().getPlayer().getUsername() + " pack=" + event.getPackId() + " allowed=" + event.getResult().isAllowed());
         if (running) packs.protect(event);
     }
-    @Subscribe(order = PostOrder.LAST) public void backendPack(ServerResourcePackSendEvent event) {
+    @Subscribe(order = PostOrder.LAST, async = false) public void backendPack(ServerResourcePackSendEvent event) {
         if (debug != null) debug.record("pack.backend.offer", "player=" + event.getServerConnection().getPlayer().getUsername() + " server=" + event.getServerConnection().getServerInfo().getName()
                 + " pack=" + event.getProvidedResourcePack().getId() + " allowed=" + event.getResult().isAllowed());
         if (running) packs.backendOffer(event);

@@ -11,11 +11,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class VideoLibraryTest {
     @TempDir Path directory;
-    private static void ffmpeg(String... args) throws Exception {
-        var command = new ArrayList<>(List.of("ffmpeg", "-nostdin", "-v", "error", "-y")); command.addAll(List.of(args));
+    private void ffmpeg(String... args) throws Exception {
+        var command = new ArrayList<>(List.of(BundledFfmpeg.resolve(directory, "auto"), "-nostdin", "-v", "error", "-y")); command.addAll(List.of(args));
         var process = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.INHERIT).start();
         assertTrue(process.waitFor(30, TimeUnit.SECONDS), "FFmpeg fixture generation timed out");
-        assertEquals(0, process.exitValue(), "FFmpeg must be installed to test custom video imports");
+        assertEquals(0, process.exitValue(), "Bundled FFmpeg must generate the fixture");
     }
     @Test void emptyLibraryUsesOnlyTheNeutralBundledDemo() throws Exception {
         var library = new VideoLibrary(directory);
@@ -26,8 +26,7 @@ class VideoLibraryTest {
     }
     @Test void importsRealMp4WithAudioAndReusesOnlyVerifiedCache() throws Exception {
         var library = new VideoLibrary(directory); Path source = directory.resolve("videos/my intro.mp4");
-        ffmpeg("-f", "lavfi", "-i", "color=c=blue:s=320x180:r=4:d=1", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", source.toString());
+        try (var input = getClass().getResourceAsStream("/h264-aac.mp4")) { Files.copy(input, source); }
         var result = library.prepare();
         assertEquals(12, result.sequence().frames()); assertEquals(12, result.sequence().fps());
         try (var zip = new ZipFile(result.pack().toFile())) {
@@ -36,7 +35,7 @@ class VideoLibraryTest {
             int rgb = image.getRGB(20,20); assertTrue((rgb & 255) > 200 && ((rgb >> 16) & 255) < 30);
             assertEquals(1920, image.getWidth()); assertEquals(2880, image.getHeight());
             Path audio = directory.resolve("imported.ogg"); Files.write(audio, zip.getInputStream(zip.getEntry("assets/crowncinema/sounds/video.ogg")).readAllBytes());
-            var decode = new ProcessBuilder("ffmpeg", "-v", "error", "-i", audio.toString(), "-f", "s16le", "pipe:1").start();
+            var decode = new ProcessBuilder(BundledFfmpeg.resolve(directory, "auto"), "-v", "error", "-i", audio.toString(), "-f", "s16le", "pipe:1").start();
             byte[] samples = decode.getInputStream().readAllBytes(); assertEquals(0, decode.waitFor());
             boolean audible = false;
             for (int i=0;i+1<samples.length;i+=2) if (Math.abs((short)((samples[i]&255)|(samples[i+1]<<8))) > 500) { audible=true;break; }
@@ -50,7 +49,7 @@ class VideoLibraryTest {
     }
     @Test void silentVideoStaysSilentAndMultipleVideosRequireSelection() throws Exception {
         var library = new VideoLibrary(directory); Path source = directory.resolve("videos/silent.mp4");
-        ffmpeg("-f", "lavfi", "-i", "color=c=red:s=320x180:r=4:d=1", "-an", "-c:v", "libx264", source.toString());
+        ffmpeg("-f", "lavfi", "-i", "color=c=red:s=320x180:r=4:d=1", "-an", "-c:v", "mpeg4", source.toString());
         Files.copy(source, directory.resolve("videos/other.mp4"));
         assertNull(library.prepare().pack());
         library.select("silent.mp4"); var result = library.prepare(); assertNotNull(result.pack());

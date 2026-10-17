@@ -25,10 +25,10 @@ final class VideoLibrary {
         if (!Files.exists(settings)) Files.writeString(settings,
                 "# auto: use a single video in videos/, otherwise the bundled demo.\n"
                 + "# builtin: bundled demo; or select a filename with /crowncinema video use <file>.\n"
-                + "file=auto\nffmpeg=ffmpeg\nfps=12\n", StandardCharsets.UTF_8);
+                + "file=auto\nffmpeg=auto\nfps=12\n", StandardCharsets.UTF_8);
         Path readme = videos.resolve("README.txt");
         if (!Files.exists(readme)) Files.writeString(readme,
-                "Drop an MP4/WebM/MOV/MKV here. FFmpeg must be installed in the Velocity container.\n"
+                "Drop an MP4/WebM/MOV/MKV here. FFmpeg is included for Linux x86-64 and ARM64; no separate installation needed.\n"
                 + "One file is selected automatically on restart. Multiple files: /crowncinema video list,\n"
                 + "/crowncinema video use <filename>, then restart Velocity. /crowncinema video default restores the demo.\n"
                 + "The first 12 seconds are imported at 960x540, 12 fps (configurable 1-20 fps).\n"
@@ -86,8 +86,8 @@ final class VideoLibrary {
         Path source = input(selection);
         int fps;
         try { fps = Integer.parseInt(values.getProperty("fps", "12").trim()); }
-        catch (NumberFormatException e) { throw new IOException("video.properties: fps muss zwischen 1 und 20.", e); }
-        if (fps < 1 || fps > 20) throw new IOException("video.properties: fps muss zwischen 1 und 20.");
+        catch (NumberFormatException e) { throw new IOException("video.properties: fps must be between 1 and 20.", e); }
+        if (fps < 1 || fps > 20) throw new IOException("video.properties: fps must be between 1 and 20.");
         String key = hash(source) + "-v1-" + fps;
         Path cache = directory.resolve("generated").resolve(key);
         Prepared cached = cached(cache, selection);
@@ -95,7 +95,7 @@ final class VideoLibrary {
         Files.createDirectories(cache.getParent());
         Path work = Files.createTempDirectory(cache.getParent(), "import-");
         try {
-            String binary = values.getProperty("ffmpeg", "ffmpeg").trim();
+            String binary = BundledFfmpeg.resolve(directory, values.getProperty("ffmpeg", "auto").trim());
             int maxFrames = 12 * fps;
             run(binary, work, "frames.log", List.of("-protocol_whitelist", "file,pipe", "-i", source.toString(),
                     "-map", "0:v:0", "-an", "-sn", "-dn", "-t", "12", "-vf",
@@ -145,7 +145,7 @@ final class VideoLibrary {
         command.addAll(args);
         Process process;
         try { process = new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(work.resolve(logName).toFile()).start(); }
-        catch (IOException e) { throw new IOException("Could not start FFmpeg. Install it inside the Velocity container or set ffmpeg in video.properties.", e); }
+        catch (IOException e) { throw new IOException("Could not start FFmpeg. Check execution permissions (noexec container mounts) or set an external executable path in video.properties.", e); }
         try {
             if (!process.waitFor(120, TimeUnit.SECONDS)) { process.destroyForcibly(); throw new IOException("FFmpeg import timed out after 120 seconds."); }
             if (process.exitValue() == 0) return true;

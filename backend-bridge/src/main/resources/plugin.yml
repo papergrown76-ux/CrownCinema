@@ -1,5 +1,5 @@
 name: CrownCinemaBackend
-version: 0.6.0
+version: 0.6.1
 main: de.crown.cinema.backend.CrownCinemaBackend
 api-version: '1.20'
 description: Optional backend protection and cinema room for Crown Cinema on Velocity.

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
-  <groupId>de.crown</groupId><artifactId>crown-cinema</artifactId><version>0.6.0</version>
+  <groupId>de.crown</groupId><artifactId>crown-cinema</artifactId><version>0.6.1</version>
   <properties><maven.compiler.release>25</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties>
   <repositories>
     <repository><id>papermc</id><url>https://repo.papermc.io/repository/maven-public/</url></repository>
@@ -23,6 +23,8 @@
     <finalName>crown-cinema</finalName>
     <resources>
       <resource><directory>src/main/resources</directory></resource>
+      <resource><directory>.deps/ffmpeg/resources</directory></resource>
+      <resource><directory>third-party/ffmpeg</directory><targetPath>META-INF/ffmpeg</targetPath><includes><include>licenses/**</include><include>README.md</include><include>sources.lock.json</include></includes></resource>
       <resource><directory>${project.basedir}</directory><targetPath>META-INF</targetPath><includes><include>LICENSE</include><include>NOTICE.md</include></includes></resource>
     </resources>
     <plugins>

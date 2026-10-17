@@ -2,7 +2,7 @@
 
 Video cinematics and server announcements for Minecraft Java networks running Velocity. Use **`/crowncinema`** to announce a server, preview a video, manage server modes and inspect resource packs. The old `/crown` command is no longer registered.
 
-[Download the compiled plugin](downloads/crown-cinema-0.6.0.jar) · [Installation ZIP](downloads/crown-cinema-installation-0.6.0.zip) · [Optional Paper plugin](downloads/crown-cinema-backend-0.6.0.jar) · [MIT license](LICENSE)
+[Download the compiled plugin](downloads/crown-cinema-0.6.1.jar) · [Installation ZIP](downloads/crown-cinema-installation-0.6.1.zip) · [Optional Paper plugin](downloads/crown-cinema-backend-0.6.1.jar) · [MIT license](LICENSE)
 
 You do not need to compile the source. Click a download above, then **Download raw file**, or use the assets on the [latest release](https://github.com/papergrown76-ux/CrownCinema/releases/latest). Source archives are provided by GitHub alongside releases. Private repositories require a signed-in account; this restriction disappears after the owner makes the repository public.
 
@@ -29,7 +29,7 @@ On the first installation, the example configuration enables `lobby=proxy`. Unli
 
 ## Import your own video
 
-1. Install FFmpeg in the Velocity environment and verify `ffmpeg -version` there.
+1. FFmpeg is **included in the proxy JAR for Linux x86-64 and ARM64**, including Pelican containers. No separate installation or startup download is needed.
 2. Place an **MP4, WebM, MOV or MKV** in `plugins/crowncinema/videos/`.
 3. With exactly one video and the default `file=auto`, restart Velocity and it is selected automatically.
 4. With multiple videos, use `/crowncinema video list`, then `/crowncinema video use intro.mp4`, and **restart Velocity**.
@@ -42,11 +42,13 @@ Use `/crowncinema video default` followed by a restart to return to the neutral 
 ```properties
 # auto, builtin, or a filename from videos/
 file=auto
-# Executable name or absolute executable path; no shell command or arguments
-ffmpeg=ffmpeg
+# auto: bundled executable; alternatively an external executable path (no arguments)
+ffmpeg=auto
 # Integer from 1 to 20
 fps=12
 ```
+
+The first custom-video import extracts a checksum-verified static executable into `plugins/crowncinema/tools/`. Existing `ffmpeg=ffmpeg` settings also select the bundled version automatically. The server user must be allowed to execute files there; a `noexec` mount needs an executable external path configured instead. Other operating systems need an external FFmpeg with PNG and libvorbis support. The bundled build supports H.264, HEVC, VP8, VP9 and MPEG-4 video; AV1 is not included.
 
 Limits: **first 12 seconds**, **960×540**, letterboxed to 16:9, default **12 fps**, input up to **250 MiB**, generated pack up to **90 MiB**. Use shorter clips or lower fps for large/high-detail videos. Original video audio is converted to Ogg; videos without audio stay silent. The sound uses Minecraft's **Master** volume slider. Import errors are logged and fall back to the neutral demo, so normal gameplay remains available. Check the active video with `/crowncinema status` after every import.
 
@@ -111,7 +113,7 @@ Common checks:
 
 ## Build and validation
 
-The neutral demo is included in source resources, so a standard build needs no personal assets, Blender or rendering step. The wrapper bootstraps checksum-verified Java 25/Maven tools on Linux x86_64. Tests require FFmpeg.
+The neutral demo is included in source resources, so a standard build needs no personal assets, Blender or rendering step. The wrapper bootstraps checksum-verified Java 25/Maven tools on Linux x86_64. The first root build compiles the embedded FFmpeg binaries using checksum-pinned sources and Zig; it needs Python 3.12+, GNU make, pkg-config and a C build toolchain, but no installed FFmpeg. See [the native build and license notes](third-party/ffmpeg/README.md).
 
 ```sh
 ./mvnw -B -ntp verify
@@ -124,12 +126,12 @@ python3 tools/package-release.py
 
 Tests start loopback-only offline development servers. Never copy their configuration to production. Protocol tests need free ports 25565, 25566, 25567, 25569 and 28124. The real Paper test also needs 25576. Run the two integration tests sequentially. The Paper test downloads pinned, checksum-verified Paper 26.2 build 134 and ViaVersion/ViaBackwards 5.12.1. It accepts the EULA for that isolated development server.
 
-Java tests exercise actual FFmpeg import with/without audio, cache validation, selection guards and debug rotation, plus command/pack/session/backend behavior. Integration tests run real Velocity/LimboAPI and a real Paper backend with protocol clients. **Pack application is simulated**; these tests do not render a game UI or perform a native 26.2/26.3 client login. To redraw the neutral demo, install Pillow and run `python3 tools/generate-demo.py`; this is optional and not needed for normal builds. The official client-codec checker is optional: `python3 tools/validate-pack.py [pack.zip]`.
+Java tests exercise actual FFmpeg import with/without audio, cache validation, selection guards and debug rotation, plus command/pack/session/backend behavior. Integration tests run real Velocity/LimboAPI and a real Paper backend with protocol clients. **Pack application is simulated**; these tests do not render a game UI or perform a native 26.2/26.3 client login. To redraw the neutral demo, install FFmpeg and Pillow and run `python3 tools/generate-demo.py`; this is optional and not needed for normal builds. The official client-codec checker is optional: `python3 tools/validate-pack.py [pack.zip]`.
 
-GitHub Actions builds/tests source changes and publishes compiled JARs, the installation ZIP and checksums alongside a published release. The repository's `downloads/` directory also provides ready-made files when Actions is unavailable.
+GitHub Actions builds/tests source changes and publishes compiled JARs, the installation ZIP, matching FFmpeg source ZIP and checksums alongside a published release. The repository's `downloads/` directory also provides ready-made files when Actions is unavailable.
 
 ## Upgrading and licensing
 
-From versions before 0.6.0, replace **both** proxy and backend JARs, restart them, and use `/crowncinema` everywhere. Permissions remain `crowncinema.*`. Existing pack-download configuration, pack preferences and backend recovery data are retained. Remove duplicate old JARs from plugin directories. Customized `message.upgrade` text is retained; set it to English yourself if an old configuration contains German text.
+For the bundled FFmpeg update from 0.6.0, replace the proxy JAR and restart Velocity; backend 0.6.0 remains compatible. From versions before 0.6.0, replace **both** proxy and backend JARs, restart them, and use `/crowncinema` everywhere. Permissions remain `crowncinema.*`. Existing pack-download configuration, pack preferences and backend recovery data are retained. Remove duplicate old JARs from plugin directories. Customized `message.upgrade` text is retained; set it to English yourself if an old configuration contains German text.
 
-Original source code and the neutral demo use the [MIT License](LICENSE). Dependencies and user videos retain their own licenses; see [NOTICE.md](NOTICE.md). This cleanup removes old binary downloads and releases from the current public-facing distribution. Git history can still contain earlier personal files until a separate history cleanup is approved and completed.
+Original source code and the neutral demo use the [MIT License](LICENSE). Dependencies and user videos retain their own licenses; see [NOTICE.md](NOTICE.md). Bundled FFmpeg has its own LGPL license; the full corresponding source archive and license notices accompany the compiled downloads.

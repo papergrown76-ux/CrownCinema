@@ -27,17 +27,35 @@ def main():
            'LICENSE':(ROOT/'LICENSE').read_bytes(),'NOTICE.md':(ROOT/'NOTICE.md').read_bytes(),
            'config.example.properties':(ROOT/'src/main/resources/config.properties').read_bytes()}
     files['VALIDATION.txt']=(f'{count} proxy + {backend_count} backend Java tests passed; no skipped or failing tests.\n'
-        'Real FFmpeg MP4 imports with audio, silent-video import, verified cache reuse, selection guards and debug-log rotation passed.\n'
+        'Embedded FFmpeg 9.0: H.264/AAC import with audible Vorbis output, silent-video import, executable/cache repair, selection guards and debug-log rotation passed.\n'
         'Velocity 4.2.1 build 41 / LimboAPI bfef579: 1.20.2 upgrade, 1.20.4 playback, sound packets, pack lifecycle, menu and permissions passed.\n'
         'Paper 26.2 build 134 / ViaVersion+ViaBackwards 5.12.1: 1.20.4 and 26.1 protocol clients passed bridge and recovery tests.\n'
         'Only the independently drawn neutral demo is bundled; no previous personal video or skins.\n'
         'Pack application is simulated by protocol clients. No visual/audio game UI, native 26.2/26.3 client or production Nexo/anticheat test.\n').encode()
-    files['SHA256SUMS']=''.join(hashlib.sha256(data).hexdigest()+'  '+name+'\n' for name,data in sorted(files.items())).encode()
+    for license_file in (ROOT/'third-party/ffmpeg/licenses').iterdir():
+        files['third-party/ffmpeg/licenses/'+license_file.name]=license_file.read_bytes()
+    files['third-party/ffmpeg/README.md']=(ROOT/'third-party/ffmpeg/README.md').read_bytes()
+    files['SHA256SUMS']=''.join(hashlib.sha256(data).hexdigest()+'  '+name+'\n' for name,data in sorted(files.items()) if name!='SHA256SUMS').encode()
     archive=downloads/f'crown-cinema-installation-{v}.zip'
     with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
         for name,data in sorted(files.items()):
             info=zipfile.ZipInfo(name,(2026,1,1,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED;z.writestr(info,data)
-    outputs=[archive]
+    lock=json.loads((ROOT/'third-party/ffmpeg/sources.lock.json').read_text())
+    source_zip=downloads/f"crown-cinema-ffmpeg-sources-{lock['ffmpeg']['version']}.zip"
+    source_files={}
+    for name in ['ffmpeg','ogg','vorbis','zlib']:
+        info=lock[name];source=ROOT/'.deps/ffmpeg/archives'/info['url'].rsplit('/',1)[1]
+        if sha(source)!=info['sha256']:raise SystemExit('Native source checksum mismatch')
+        source_files['sources/'+source.name]=source.read_bytes()
+    for source in sorted((ROOT/'third-party/ffmpeg').rglob('*')):
+        if source.is_file():source_files[str(source.relative_to(ROOT))]=source.read_bytes()
+    source_files['tools/build-bundled-ffmpeg.py']=(ROOT/'tools/build-bundled-ffmpeg.py').read_bytes()
+    source_files['LICENSE']=(ROOT/'LICENSE').read_bytes()
+    source_files['README.md']=b'Exact FFmpeg/library sources for CrownCinema. See third-party/ffmpeg/README.md.\nBuild: python3 tools/build-bundled-ffmpeg.py (Linux x86-64).\nPlace source archives from sources/ into .deps/ffmpeg/archives/ for offline source reuse.\nThe pinned Zig compiler is downloaded separately and checksum verified.\n'
+    with zipfile.ZipFile(source_zip,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+        for name,data in sorted(source_files.items()):
+            info=zipfile.ZipInfo(name,(2026,1,1,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED;z.writestr(info,data)
+    outputs=[archive,source_zip]
     for name,data in [(f'crown-cinema-{v}.jar',proxy.read_bytes()),(f'crown-cinema-backend-{bv}.jar',backend.read_bytes())]:
         p=downloads/name;p.write_bytes(data);outputs.append(p)
     for p in outputs:p.with_name(p.name+'.sha256').write_text(sha(p)+'  '+p.name+'\n')

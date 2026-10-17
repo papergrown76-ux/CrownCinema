@@ -54,10 +54,11 @@ login-ratelimit = 0
         own=plugins/'crowncinema';own.mkdir(exist_ok=True)
         (own/'config.properties').write_text('pack.url=\npack.http.bind=127.0.0.1\npack.http.port=28124\ncinema.server.lobby=bridge\ncinema.endcard-seconds=1\n',encoding='utf-8')
         videos=own/'videos';videos.mkdir(exist_ok=True)
-        subprocess.run(['ffmpeg','-nostdin','-v','error','-y','-f','lavfi','-i','color=c=blue:s=320x180:r=20:d=6',
-                        '-f','lavfi','-i','sine=frequency=330:duration=6','-c:v','libx264','-preset','ultrafast',
+        binary=ROOT/'.deps/ffmpeg/bin/linux-x86_64/ffmpeg'
+        subprocess.run([str(binary),'-nostdin','-v','error','-y','-f','lavfi','-i','color=c=blue:s=320x180:r=20:d=6',
+                        '-f','lavfi','-i','sine=frequency=330:duration=6','-c:v','mpeg4',
                         '-c:a','aac','-shortest',str(videos/'test-pattern.mp4')],check=True)
-        (own/'video.properties').write_text('file=test-pattern.mp4\nfps=20\nffmpeg=ffmpeg\n',encoding='utf-8')
+        (own/'video.properties').write_text('file=test-pattern.mp4\nfps=20\nffmpeg=auto\n',encoding='utf-8')
     if smoke:
         own=plugins/'crowncinema';own.mkdir(exist_ok=True)
         (own/'config.properties').write_text('pack.url=\npack.required=false\npack.http.enabled=true\npack.http.bind=127.0.0.1\npack.http.port=28124\ncinema.endcard-seconds=1\ncinema.server.lobby=proxy\ncinema.server.launch=bridge\n',encoding='utf-8')

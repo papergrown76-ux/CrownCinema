@@ -121,7 +121,7 @@ final class PackService {
             preferences.set(event.getPlayer().getUniqueId(), PackPreferences.Choice.OFF);
         switch (event.getStatus()) {
             case DECLINED, FAILED_DOWNLOAD, INVALID_URL, FAILED_RELOAD, DISCARDED ->
-                event.getPlayer().sendMessage(Component.text("Crown-Animationen sind ohne geladenes Resource Pack disabled. Du kannst normal weiterspielen.", NamedTextColor.YELLOW));
+                event.getPlayer().sendMessage(Component.text("Crown animations are disabled without the resource pack. You can continue playing normally.", NamedTextColor.YELLOW));
             default -> { }
         }
     }
