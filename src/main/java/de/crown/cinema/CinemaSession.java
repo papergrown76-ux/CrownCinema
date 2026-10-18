@@ -21,7 +21,7 @@ final class CinemaSession implements LimboSessionHandler {
         void completed(CinemaSession session, boolean announced);
     }
 
-    private static final Key MOVIE_FONT = Key.key("crowncinema", "movie");
+    private final Key movieFont, movieSound;
     private final Player player;
     private final RegisteredServer previous;
     private final RegisteredServer target;
@@ -41,6 +41,12 @@ final class CinemaSession implements LimboSessionHandler {
 
     CinemaSession(Player player, RegisteredServer previous, RegisteredServer target, String displayName,
                   Sequence sequence, int endcardSeconds, Listener listener, Logger logger) {
+        this(player, previous, target, displayName, sequence, endcardSeconds, listener, logger, Key.key("crowncinema:movie"), CinemaAudio.SOUND);
+    }
+
+    CinemaSession(Player player, RegisteredServer previous, RegisteredServer target, String displayName,
+                  Sequence sequence, int endcardSeconds, Listener listener, Logger logger, Key font, Key sound) {
+        movieFont = font; movieSound = sound;
         this.player = player;
         this.previous = previous;
         this.target = target;
@@ -65,7 +71,7 @@ final class CinemaSession implements LimboSessionHandler {
         started = System.nanoTime();
         try {
             spawned.sendAbilities((byte) 7, 0, 0); // invulnerable, flying, allowed to fly
-            CinemaAudio.play(spawned);
+            CinemaAudio.play(spawned, movieSound);
             tick(started);
             ticker = spawned.getScheduledExecutor().scheduleAtFixedRate(this::safeTick,
                     1_000_000_000L / sequence.fps(), 1_000_000_000L / sequence.fps(), TimeUnit.NANOSECONDS);
@@ -79,7 +85,7 @@ final class CinemaSession implements LimboSessionHandler {
         hasSpawned = true;
         started = System.nanoTime();
         try {
-            player.playSound(Sound.sound(CinemaAudio.SOUND, Sound.Source.MASTER, 0.8f, 1), Sound.Emitter.self());
+            player.playSound(Sound.sound(movieSound, Sound.Source.MASTER, 0.8f, 1), Sound.Emitter.self());
             tick(started);
             ticker = executor.scheduleAtFixedRate(this::safeTick,
                     1_000_000_000L / sequence.fps(), 1_000_000_000L / sequence.fps(), TimeUnit.NANOSECONDS);
@@ -87,8 +93,8 @@ final class CinemaSession implements LimboSessionHandler {
     }
 
     private void stopSound() {
-        if (limboPlayer != null) CinemaAudio.stop(limboPlayer);
-        else if (hasSpawned) player.stopSound(net.kyori.adventure.sound.SoundStop.namedOnSource(CinemaAudio.SOUND, Sound.Source.MASTER));
+        if (limboPlayer != null) CinemaAudio.stop(limboPlayer, movieSound);
+        else if (hasSpawned) player.stopSound(net.kyori.adventure.sound.SoundStop.namedOnSource(movieSound, Sound.Source.MASTER));
     }
 
     private synchronized void safeTick() {
@@ -103,7 +109,7 @@ final class CinemaSession implements LimboSessionHandler {
         int frame = sequence.frameAt(elapsed);
         if (frame < sequence.frames()) {
             if (frame != lastFrame) {
-                player.showTitle(Title.title(Component.text(sequence.glyph(frame)).font(MOVIE_FONT).color(NamedTextColor.WHITE),
+                player.showTitle(Title.title(Component.text(sequence.glyph(frame)).font(movieFont).color(NamedTextColor.WHITE),
                         Component.empty(), Title.Times.times(Duration.ZERO, Duration.ofSeconds(2), Duration.ZERO)));
                 lastFrame = frame;
             }

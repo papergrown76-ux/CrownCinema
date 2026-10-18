@@ -27,10 +27,21 @@ final class PackService {
     private final ProxyServer proxy;
     private final CinemaConfig config;
     private final PackPreferences preferences;
-    private final byte[] digest;
+    record Payload(Path file, String hash) {
+        static Payload load(Path file) throws IOException {
+            try (var input = Files.newInputStream(file)) {
+                var digest = MessageDigest.getInstance("SHA-1"); byte[] bytes = new byte[65536]; int n;
+                while ((n = input.read(bytes)) != -1) digest.update(bytes, 0, n);
+                return new Payload(file, HexFormat.of().formatHex(digest.digest()));
+            } catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
+        }
+        byte[] digest() { return HexFormat.of().parseHex(hash); }
+    }
+    private volatile Payload current;
+    private final Map<String, Payload> versions = new ConcurrentHashMap<>();
     private final Set<UUID> offered = ConcurrentHashMap.newKeySet();
     private final Map<UUID, PlayerResourcePackStatusEvent.Status> states = new ConcurrentHashMap<>();
-    private final String hash;
+
     private final java.util.function.Consumer<Player> retryOffer;
     private final Map<UUID, Map<UUID, com.velocitypowered.api.proxy.ServerConnection>> backendOffers = new ConcurrentHashMap<>();
     private final Map<UUID, String> backendStates = new ConcurrentHashMap<>();
@@ -52,38 +63,45 @@ final class PackService {
         this.config = config;
         this.retryOffer = retryOffer;
         this.preferences = new PackPreferences(directory);
-        Path pack = directory.resolve("crown-cinema.zip");
-        byte[] data;
-        try (InputStream in = importedPack == null ? PackService.class.getResourceAsStream("/cinema/crown-cinema.zip") : Files.newInputStream(importedPack)) {
-            if (in == null) throw new IOException("Missing cinema resource pack");
-            data = in.readAllBytes();
-        }
-        // This is a generated output, separate from the editable configuration.
-        Files.write(pack, data);
-        try { digest = MessageDigest.getInstance("SHA-1").digest(data); }
-        catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
-        hash = HexFormat.of().formatHex(digest);
+        if (importedPack == null) {
+            Path pack = directory.resolve("crown-cinema.zip");
+            try (var in = PackService.class.getResourceAsStream("/cinema/crown-cinema.zip")) {
+                if (in == null) throw new IOException("Missing cinema resource pack");
+                Files.copy(in, pack, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            current = Payload.load(pack);
+        } else current = Payload.load(importedPack);
+        versions.put(current.hash(), current);
     }
 
-    boolean configured() { return config.packUrl() != null || config.httpEnabled(); }
-    String hash() { return hash; }
+    synchronized boolean install(Payload payload) {
+        if (current.hash().equals(payload.hash())) return false;
+        versions.put(payload.hash(), payload); current = payload;
+        offered.clear(); states.clear(); return true;
+    }
+    Payload download(String version) { return version == null ? current : versions.get(version); }
 
-    void offer(Player player) {
+    boolean configured() { return config.packUrl() != null || config.httpEnabled(); }
+    String hash() { return current.hash(); }
+
+    synchronized void offer(Player player) {
         if (!configured() || !policy.supports(player.getProtocolVersion()) || !player.isActive()
                 || preference(player) == PackPreferences.Choice.OFF) return;
         var url = config.packUrlFor(player.getVirtualHost().map(address -> address.getHostString()).orElse(null));
         if (url == null) return;
-        if (owns(player)) return;
+        if (hasCurrent(player)) return;
         // Backend pack managers must finish their reload before our optional
         // pack starts another reload. Do not interrupt their pending requests.
         if (!backendOffers.getOrDefault(player.getUniqueId(), Map.of()).isEmpty()
                 || player.getPendingResourcePacks().stream().anyMatch(p -> p.getOrigin() == ResourcePackInfo.Origin.DOWNSTREAM_SERVER)) {
             retryOffer.accept(player); return;
         }
+        Payload payload = current;
+        if (owns(player)) { player.removeResourcePacks(PACK_ID); offered.remove(player.getUniqueId()); }
         if (!offered.add(player.getUniqueId())) return;
         try {
-            var offer = proxy.createResourcePackBuilder(url.toASCIIString())
-                    .setId(PACK_ID).setHash(digest).setShouldForce(config.required())
+            var offer = proxy.createResourcePackBuilder(url.toASCIIString() + (config.packUrl() == null ? "?v=" + payload.hash() : ""))
+                    .setId(PACK_ID).setHash(payload.digest()).setShouldForce(config.required())
                     .setPrompt(Component.text("Crown Cinema - video cinematics")).build();
             player.sendResourcePackOffer(offer);
         }
@@ -92,11 +110,19 @@ final class PackService {
 
     boolean ready(Player player) {
         return policy.supports(player.getProtocolVersion()) && player.getAppliedResourcePacks().stream()
-                .anyMatch(p -> p.getId().equals(PACK_ID));
+                .anyMatch(p -> matches(p, current));
+    }
+
+    private boolean hasCurrent(Player player) {
+        return ready(player) || player.getPendingResourcePacks().stream().anyMatch(p -> matches(p, current));
+    }
+    private static boolean matches(ResourcePackInfo pack, Payload payload) {
+        return pack.getId().equals(PACK_ID) && java.util.Arrays.equals(pack.getHash(), payload.digest());
     }
 
     private boolean owns(Player player) {
-        return ready(player) || player.getPendingResourcePacks().stream().anyMatch(p -> p.getId().equals(PACK_ID));
+        return player.getAppliedResourcePacks().stream().anyMatch(p -> p.getId().equals(PACK_ID))
+                || player.getPendingResourcePacks().stream().anyMatch(p -> p.getId().equals(PACK_ID));
     }
 
     void status(PlayerResourcePackStatusEvent event) throws IOException {

@@ -117,7 +117,7 @@ async function main() {
   assert.equal(old.packOffers.length,0);
   assert.equal(old.chat.filter(x=>x.includes('1.20.3')).length,1);
   console.log('PASS: 1.20.2 gets one upgrade message and no pack; 1.20.4 gets the pack');
-  assert.equal(cinemaOffer.url, 'http://127.0.0.1:28124/crown-cinema.zip');
+  assert.equal(cinemaOffer.url, 'http://127.0.0.1:28124/crown-cinema.zip?v='+cinemaOffer.hash);
   const download = await fetch(cinemaOffer.url);
   assert.equal(download.status, 200);
   const pack=Buffer.from(await download.arrayBuffer());

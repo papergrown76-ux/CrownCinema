@@ -26,6 +26,8 @@ jobs:
         run: NODE_PATH="$PWD/tools/smoke/node_modules" node tools/protocol-smoke.cjs
       - name: Test real Paper bridge and recovery
         run: NODE_PATH="$PWD/tools/smoke/node_modules" node tools/real-bridge-smoke.cjs
+      - name: Validate the native settings dialog with the vanilla codec
+        run: python3 tools/validate-dialog.py
       - name: Package the verified binaries
         run: python3 tools/package-release.py
   native-executables:

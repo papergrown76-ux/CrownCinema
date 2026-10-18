@@ -1,7 +1,7 @@
 {
   "id": "crowncinema",
   "name": "Crown Cinema",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Video cinematics and server announcements for Velocity; optional Paper bridge.",
   "authors": ["Papergrown"],
   "dependencies": [{"id": "limboapi", "optional": false}],

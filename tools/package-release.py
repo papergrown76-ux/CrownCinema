@@ -16,7 +16,9 @@ def main():
     proxy=ROOT/'target/crown-cinema.jar';backend=ROOT/'backend-bridge/target/crown-cinema-backend.jar'
     result=json.loads((ROOT/'build/protocol-smoke-result.json').read_text());bridge=json.loads((ROOT/'build/real-bridge-result.json').read_text())
     if not all(result.get(k) for k in ['passed','soundPacketsVerified','backendBridgeVerified','backendPackLifecycleVerified']):raise SystemExit('Protocol checks incomplete')
-    if result['pluginSha256']!=sha(proxy) or not bridge['passed'] or not bridge.get('customVideoImportVerified') or bridge['proxySha256']!=sha(proxy) or bridge['backendSha256']!=sha(backend):raise SystemExit('Tests do not match the built JARs')
+    if result['pluginSha256']!=sha(proxy) or not bridge['passed'] or not all(bridge.get(key) for key in ['customVideoImportVerified','liveVideoUpdatesVerified','vanillaDialogVerified']) or bridge['proxySha256']!=sha(proxy) or bridge['backendSha256']!=sha(backend):raise SystemExit('Tests do not match the built JARs')
+    dialog=json.loads((ROOT/'build/dialog-validation-result.json').read_text())
+    if not dialog['passed'] or dialog['pluginSha256']!=sha(proxy):raise SystemExit('Dialog codec validation does not match the built JAR')
     pack=ROOT/'src/main/resources/cinema/crown-cinema.zip'
     if result['packSha256']!=sha(pack):raise SystemExit('Pack checks do not match')
     count=tests(ROOT/'target/surefire-reports');backend_count=tests(ROOT/'backend-bridge/target/surefire-reports')
@@ -30,6 +32,7 @@ def main():
         'Embedded FFmpeg 9.0: H.264/AAC import with audible Vorbis output, silent-video import, executable/cache repair, selection guards and debug-log rotation passed.\n'
         'Velocity 4.2.1 build 41 / LimboAPI bfef579: 1.20.2 upgrade, 1.20.4 playback, sound packets, pack lifecycle, menu and permissions passed.\n'
         'Paper 26.2 build 134 / ViaVersion+ViaBackwards 5.12.1: 1.20.4 and 26.1 protocol clients passed bridge and recovery tests.\n'
+        'Live imports, deferred publication, target-specific clips, hash-bound download versions and vanilla dialog navigation passed.\n'
         'Only the independently drawn neutral demo is bundled; no previous personal video or skins.\n'
         'Pack application is simulated by protocol clients. No visual/audio game UI, native 26.2/26.3 client or production Nexo/anticheat test.\n').encode()
     for license_file in (ROOT/'third-party/ffmpeg/licenses').iterdir():

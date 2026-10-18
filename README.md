@@ -2,9 +2,9 @@
 
 Video cinematics and server announcements for Minecraft Java networks running Velocity. Use **`/crowncinema`** to announce a server, preview a video, manage server modes and inspect resource packs. The old `/crown` command is no longer registered.
 
-[Download the compiled plugin](downloads/crown-cinema-0.6.1.jar) · [Installation ZIP](downloads/crown-cinema-installation-0.6.1.zip) · [Optional Paper plugin](downloads/crown-cinema-backend-0.6.1.jar) · [MIT license](LICENSE)
+[Download the compiled plugin](downloads/crown-cinema-0.7.0.jar) · [Installation ZIP](downloads/crown-cinema-installation-0.7.0.zip) · [Optional Paper plugin](downloads/crown-cinema-backend-0.6.1.jar) · [MIT license](LICENSE)
 
-You do not need to compile the source. Click a download above, then **Download raw file**, or use the assets on the [latest release](https://github.com/papergrown76-ux/CrownCinema/releases/latest). Source archives are provided by GitHub alongside releases. Private repositories require a signed-in account; this restriction disappears after the owner makes the repository public.
+You do not need to compile the source. Click a download above, then **Download raw file**, or use the assets on the [latest release](https://github.com/papergrown76-ux/CrownCinema/releases/latest). Source archives are provided by GitHub alongside releases.
 
 The bundled six-second demo is independently drawn and silent. It contains no player skins, Minecraft textures or the previous personal forge video. Add your own video to play its images and audio.
 
@@ -12,7 +12,7 @@ The bundled six-second demo is independently drawn and silent. It contains no pl
 
 - Velocity with **Java 25**. The tested build is Velocity **4.2.1-SNAPSHOT build 41**.
 - [LimboAPI 1.1.27-SNAPSHOT, build bfef579](https://modrinth.com/plugin/limboapi/version/zOTyppCs) on Velocity, even when using backend bridge mode.
-- **FFmpeg inside the Velocity machine/container** for custom videos. A host installation is insufficient if the proxy runs in a separate Pelican/Docker container. No Python or Blender is needed on your server.
+- **FFmpeg is included** for Linux x86-64 and ARM64, including Pelican containers. Other platforms need an external FFmpeg executable. No Python or Blender is needed on your server.
 - Minecraft Java **1.20.3 or newer**, within the prepared protocol range supported by the installed LimboAPI. This build prepares protocols **765–777**. Older clients get an upgrade message and can continue playing.
 - An inbound **TCP port**, default **8124**, reachable by players for the resource-pack download. On Pelican, add the allocation and publish the port in addition to opening the firewall.
 
@@ -23,52 +23,78 @@ The bundled six-second demo is independently drawn and silent. It contains no pl
 3. Keep `pack.url=` empty and `pack.http.enabled=true` for automatic hosting. The plugin serves the generated pack itself; no MP4 or ZIP upload to another website is required.
 4. Open inbound TCP 8124, or change `pack.http.port`. If your Minecraft hostname uses SRV records, a TCP proxy or different HTTP routing, set `pack.http.public-host` to this proxy's directly reachable hostname/IP, without a scheme or port.
 5. Give administrators `crowncinema.admin` and players `crowncinema.pack` in the **Velocity permission system**. For LuckPerms: `lpv group admin permission set crowncinema.admin true` and `lpv group default permission set crowncinema.pack true`.
-6. Run `/crowncinema servers` to configure which registered Velocity servers may show animations.
+6. Run `/crowncinema menu` (native dialogs on Java 1.21.6+) or `/crowncinema servers` to configure which registered Velocity servers may show animations.
 
 On the first installation, the example configuration enables `lobby=proxy`. Unlisted servers are OFF. Replace the example with your actual safe lobby name.
 
-## Import your own video
+## Import and switch videos without restarting
 
-1. FFmpeg is **included in the proxy JAR for Linux x86-64 and ARM64**, including Pelican containers. No separate installation or startup download is needed.
-2. Place an **MP4, WebM, MOV or MKV** in `plugins/crowncinema/videos/`.
-3. With exactly one video and the default `file=auto`, restart Velocity and it is selected automatically.
-4. With multiple videos, use `/crowncinema video list`, then `/crowncinema video use intro.mp4`, and **restart Velocity**.
-5. The plugin converts the video, caches the generated pack and hosts it on the existing download port. Players receive the changed pack hash and can reuse unchanged cached content.
+1. Upload an **MP4, WebM, MOV or MKV** to `plugins/crowncinema/videos/`.
+2. Run `/crowncinema video use intro.mp4` to import it in the background and select it as the default. No Velocity restart is needed. Names containing spaces are supported.
+3. Watch the progress messages: frame extraction, audio conversion, resource generation and publication. Normal gameplay continues during conversion.
+4. Active animations finish before the new catalog is activated. Players receive an updated Crown pack when needed; playback requires the new pack hash to be applied. Failed imports keep the previous catalog and settings.
 
-Use `/crowncinema video default` followed by a restart to return to the neutral demo. Replacing the selected input file also takes effect after a restart. Selection is global for the proxy; this version plays one selected video, followed by the requested server name and a clickable **JOIN NOW** chat entry.
+`/crowncinema video import intro.mp4` loads a video without changing the default. Selecting an already imported, unchanged video reuses the same combined pack and does not reload it. `/crowncinema video default` switches to the neutral demo immediately. `/crowncinema video reload` rechecks loaded input files and reimports changed content or fps settings. `/crowncinema video unload unused.mp4` removes unused resources; first remove any default/server assignments for that file. Input files are never deleted by these commands.
 
-`plugins/crowncinema/video.properties`:
+### Different videos for target servers
 
-```properties
-# auto, builtin, or a filename from videos/
-file=auto
-# auto: bundled executable; alternatively an external executable path (no arguments)
-ffmpeg=auto
-# Integer from 1 to 20
-fps=12
+```text
+/crowncinema video server survival survival-intro.mp4
+/crowncinema video server skyblock skyblock-intro.mp4
+/crowncinema announce survival Survival
+/crowncinema announce skyblock Skyblock
 ```
 
-The first custom-video import extracts a checksum-verified static executable into `plugins/crowncinema/tools/`. Existing `ffmpeg=ffmpeg` settings also select the bundled version automatically. The server user must be allowed to execute files there; a `noexec` mount needs an executable external path configured instead. Other operating systems need an external FFmpeg with PNG and libvorbis support. The bundled build supports H.264, HEVC, VP8, VP9 and MPEG-4 video; AV1 is not included.
+Assignments choose the video for the **advertised target server**, regardless of which eligible backend the viewer is currently on. An unassigned target uses the global default. `/crowncinema video server survival default` removes the override; `builtin` explicitly selects the neutral demo. The chosen video still ends with the target's display name and JOIN NOW.
 
-Limits: **first 12 seconds**, **960×540**, letterboxed to 16:9, default **12 fps**, input up to **250 MiB**, generated pack up to **90 MiB**. Use shorter clips or lower fps for large/high-detail videos. Original video audio is converted to Ogg; videos without audio stay silent. The sound uses Minecraft's **Master** volume slider. Import errors are logged and fall back to the neutral demo, so normal gameplay remains available. Check the active video with `/crowncinema status` after every import.
+Loaded videos have separate fonts and sound events in one combined resource pack, so different targets can play concurrently. Up to **15 custom videos plus the demo**, with at most **90 MiB of combined pack resources**, can be loaded. Reduce fps, shorten videos or unload unused files when reaching the limit. Download URLs include their content hash; an old in-flight URL continues serving its original bytes during an update. The plugin only replaces its own pack.
 
-Minecraft does not play MP4 files directly. The plugin converts frames into a private bitmap font and plays the audio through the resource pack. Quality and screen coverage depend on the client's GUI scale and resource-pack compatibility. This is a short cinematic system, not a general movie player.
+Selections, imported files and target assignments are persisted in `plugins/crowncinema/video.properties`. A single video is automatically selected on first startup with `file=auto`; multiple files use the neutral demo until selected.
 
-Converted data is cached under `plugins/crowncinema/generated/`, verified by content hashes and reused on restart. The selected input, its frame rate or an invalid cache triggers conversion again. Custom video imports require built-in hosting (`pack.url` empty, HTTP enabled).
+```properties
+file=auto
+# Bundled FFmpeg; alternatively an external executable path without arguments
+ffmpeg=auto
+# Integer from 1 to 20. Apply changes with /crowncinema video reload.
+fps=12
+# Server assignments are written automatically by commands, for example:
+# server.survival=survival-intro.mp4
+```
+
+FFmpeg is extracted and SHA-256 verified under `plugins/crowncinema/tools/`. Legacy `ffmpeg=ffmpeg` settings also use the bundled binary. The server user needs permission to execute files there; a `noexec` mount needs an external executable path. The bundled build supports H.264, HEVC, VP8, VP9 and MPEG-4; AV1 is not included.
+
+Per-video limits remain **the first 12 seconds**, **960×540**, letterboxed to 16:9, default **12 fps**, input up to **250 MiB**. Audio is converted to Ogg; silent inputs stay silent. Playback uses Minecraft's **Master** volume. Import errors appear in progress messages and the debug log. Live updates require built-in hosting (`pack.url` empty, HTTP enabled).
+
+Minecraft renders converted bitmap-font frames rather than MP4 directly. Visual coverage depends on GUI scale and pack compatibility. This is a short cinematic system. No player skins or personal videos are included.
+
+## Native vanilla settings GUI
+
+Run **`/crowncinema menu`**, `/crowncinema gui` or `/crowncinema` with `crowncinema.admin`.
+
+- Java **1.21.6+**: real vanilla dialog window with default/import video selection, registered server settings, mode buttons, target video assignment and pagination. No client mod or backend GUI plugin is needed.
+- Older supported clients and the console: clickable chat server overview. All video commands remain available. `/crowncinema servers` always opens that chat overview.
+- GUI actions run the same permission-checked commands. Escape/Close dismisses the window; it does not freeze gameplay. Bridge playback still requires the optional backend companion.
+
+These are Minecraft's inline dialogs, documented in the [official 1.21.6 release notes](https://www.minecraft.net/en-us/article/minecraft-java-edition-1-21-6). Headless tests verify delivery, navigation and vanilla codec acceptance; they do not render the window in a Minecraft client.
 
 ## Commands and permissions
 
 | Command | Permission | Purpose |
 | --- | --- | --- |
-| `/crowncinema servers [page]` or `menu` | `crowncinema.admin` | Clickable chat menu listing registered Velocity servers and configured modes |
+| `/crowncinema servers [page]` | `crowncinema.admin` | Clickable chat menu listing registered Velocity servers and configured modes |
 | `/crowncinema server <name> off\|proxy\|bridge` | `crowncinema.admin` | Save and apply a server mode immediately |
 | `/crowncinema announce <target> [display name]` | `crowncinema.admin` | Request playback for eligible players; JOIN NOW points to the target |
 | `/crowncinema preview <target> [display name]` | `crowncinema.admin` | Preview for yourself in game |
 | `/crowncinema stop <player\|all>` | `crowncinema.admin` | Stop playback and restore viewers |
 | `/crowncinema status [player]` | `crowncinema.admin` | Active video, debug state, pack hash, download address and backend pack status; supports the proxy console |
 | `/crowncinema video list` | `crowncinema.admin` | List local input files and active video |
-| `/crowncinema video use <filename>` | `crowncinema.admin` | Save a selection; restart to import and use it |
-| `/crowncinema video default` | `crowncinema.admin` | Select the neutral demo; restart to apply |
+| `/crowncinema menu` or `gui` | `crowncinema.admin` | Native vanilla settings dialog; chat fallback for older clients |
+| `/crowncinema video import <filename>` | `crowncinema.admin` | Import resources in the background without changing the default |
+| `/crowncinema video use <filename>` | `crowncinema.admin` | Import and switch the default live |
+| `/crowncinema video server <target> <filename\|default\|builtin>` | `crowncinema.admin` | Assign a target video or remove its override |
+| `/crowncinema video reload` | `crowncinema.admin` | Recheck imported files and fps settings |
+| `/crowncinema video unload <filename>` | `crowncinema.admin` | Unload unused resources without deleting the input |
+| `/crowncinema video default` | `crowncinema.admin` | Switch to the neutral demo live |
 | `/crowncinema debug on\|off` | `crowncinema.admin` | Persistently enable/disable diagnostics |
 | `/crowncinema pack on\|off\|ask` | `crowncinema.pack` | Change your saved pack preference |
 | `/crowncinema join` | None | Join the server from the current announcement |
@@ -108,7 +134,7 @@ Common checks:
 
 - **FAILED_DOWNLOAD:** Open the displayed download URL on a player's PC; it must download a ZIP. Check Pelican allocation, inbound TCP, bind address and DNS.
 - **FAILED_RELOAD / missing Nexo textures:** Keep the pack-status trace and the Minecraft client `latest.log` lines mentioning resource reloads/shaders. This cannot be diagnosed from a successful HTTP download alone.
-- **No video after upload:** Check active selection, FFmpeg availability inside the container, input limits and import errors; restart after selecting a file.
+- **No video after upload:** Run `/crowncinema video list` and check import progress/errors. Use `/crowncinema video use <file>` or `reload`; a restart is not required.
 - **Black cinema room:** `/crownbackend leave`; backend admins can run `crownbackend status <player>` and `crownbackend recover <player>`. A blocked return retains protection/recovery and retries every second. Already deleted historical recovery data cannot be reconstructed.
 
 ## Build and validation
@@ -121,6 +147,7 @@ The neutral demo is included in source resources, so a standard build needs no p
 npm --prefix tools/smoke ci --cache build/npm-cache --no-audit --no-fund
 NODE_PATH="$PWD/tools/smoke/node_modules" node tools/protocol-smoke.cjs
 NODE_PATH="$PWD/tools/smoke/node_modules" node tools/real-bridge-smoke.cjs
+python3 tools/validate-dialog.py
 python3 tools/package-release.py
 ```
 
@@ -132,6 +159,6 @@ GitHub Actions builds/tests source changes and publishes compiled JARs, the inst
 
 ## Upgrading and licensing
 
-For the bundled FFmpeg update from 0.6.0, replace the proxy JAR and restart Velocity; backend 0.6.0 remains compatible. From versions before 0.6.0, replace **both** proxy and backend JARs, restart them, and use `/crowncinema` everywhere. Permissions remain `crowncinema.*`. Existing pack-download configuration, pack preferences and backend recovery data are retained. Remove duplicate old JARs from plugin directories. Customized `message.upgrade` text is retained; set it to English yourself if an old configuration contains German text.
+For 0.7.0, replace the proxy JAR once and restart Velocity; subsequent video updates need no restart. Backend 0.6.0/0.6.1 remains compatible. From versions before 0.6.0, replace **both** proxy and backend JARs, restart them, and use `/crowncinema` everywhere. Permissions remain `crowncinema.*`. Existing pack-download configuration, pack preferences and backend recovery data are retained. Remove duplicate old JARs from plugin directories. Customized `message.upgrade` text is retained; set it to English yourself if an old configuration contains German text.
 
 Original source code and the neutral demo use the [MIT License](LICENSE). Dependencies and user videos retain their own licenses; see [NOTICE.md](NOTICE.md). Bundled FFmpeg has its own LGPL license; the full corresponding source archive and license notices accompany the compiled downloads.

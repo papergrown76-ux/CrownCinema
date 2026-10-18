@@ -48,12 +48,12 @@ public final class CrownCinema implements CinemaSession.Listener {
     private ServerAdminCommand serverAdmin;
     private ClientPolicy policy;
     private PackService packs;
-    private Sequence sequence;
+    private volatile Runnable pendingVideoPublish;
     private Limbo room;
     private PackHttpServer http;
     private BackendBridge bridge;
-    private VideoLibrary videos;
-    private String videoName;
+    private VideoManager videos;
+    private AdminDialogs dialogs;
     private DebugLog debug;
     private final java.util.concurrent.ScheduledExecutorService backendExecutor = java.util.concurrent.Executors.newScheduledThreadPool(2);
     private volatile boolean running;
@@ -68,24 +68,16 @@ public final class CrownCinema implements CinemaSession.Listener {
             debug = new DebugLog(directory, logger);
             serverSettings = new ServerSettings(directory,config.serverModes());
             serverAdmin = new ServerAdminCommand(proxy,serverSettings,this::serverModeChanged,logger);
-            videos = new VideoLibrary(directory);
-            logger.info("Preparing selected video; custom videos may take a moment to convert with FFmpeg");
-            VideoLibrary.Prepared assets;
-            try { assets = videos.prepare(); }
-            catch (Exception e) {
-                debug.record("video.import.failed", "reason=" + e.getMessage());
-                logger.error("Custom video import failed; using the neutral demo. Check FFmpeg and video.properties", e);
-                assets = new VideoLibrary.Prepared(Sequence.load(), null, "Neutral demo (custom import failed: " + e.getMessage() + ")");
-            }
-            sequence = assets.sequence(); videoName = assets.name();
-            if (assets.pack() != null && (config.packUrl() != null || !config.httpEnabled()))
+            videos = new VideoManager(directory, this::whenPlaybackIdle, this::catalogInstalled);
+            var assets = videos.snapshot();
+            if (assets.clips().size() > 1 && (config.packUrl() != null || !config.httpEnabled()))
                 throw new IllegalArgumentException("Custom videos require pack.url empty and pack.http.enabled=true for automatic hosting");
-            logger.info("Video: {} ({} frames, {} fps)", videoName, sequence.frames(), sequence.fps());
-            debug.record("video.ready", "name=" + videoName + " frames=" + sequence.frames() + " fps=" + sequence.fps());
+            logger.info("Video: {} ({} frames, {} fps)", assets.defaultClip().name(), assets.defaultClip().sequence().frames(), assets.defaultClip().sequence().fps());
+            debug.record("video.ready", "name=" + assets.defaultClip().name() + " clips=" + assets.clips().size());
             var factory = (LimboFactory) proxy.getPluginManager().getPlugin("limboapi")
                     .flatMap(p -> p.getInstance()).orElseThrow(() -> new IllegalStateException("LimboAPI is required on the proxy"));
             policy = new ClientPolicy(factory.getPrepareMinVersion(), factory.getPrepareMaxVersion());
-            packs = new PackService(proxy, config, policy, directory, this::schedulePackOffer, assets.pack());
+            packs = new PackService(proxy, config, policy, directory, this::schedulePackOffer, assets.pack().file());
             bridge = new BackendBridge(backendExecutor);
             proxy.getChannelRegistrar().register(BackendBridge.CHANNEL);
             var world = factory.createVirtualWorld(Dimension.OVERWORLD, 0.5, 72, 0.5, 180, 0);
@@ -95,11 +87,12 @@ public final class CrownCinema implements CinemaSession.Listener {
             }
             room = factory.createLimbo(world).setName("Crown Cinema").setGameMode(GameMode.SPECTATOR)
                     .setWorldTime(18000).setViewDistance(2).setSimulationDistance(2).setReducedDebugInfo(true);
+            dialogs = new AdminDialogs(proxy, serverSettings, videos);
             var command = new CinemaCommand();
             var meta = proxy.getCommandManager().metaBuilder("crowncinema").plugin(this).build();
             proxy.getCommandManager().register(meta, command);
             room.registerCommand(meta, command);
-            if (config.httpEnabled()) http = new PackHttpServer(config.httpBind(), config.httpPort(), directory.resolve("crown-cinema.zip"), packs.hash());
+            if (config.httpEnabled()) http = new PackHttpServer(config.httpBind(), config.httpPort(), packs::download);
             running = true;
             if (http != null) logger.info("Pack download server listening on {}:{}; allow this TCP port through your firewall. Public host: {}",
                     config.httpBind(), http.port(), config.httpPublicHost().isEmpty() ? "player connection hostname (automatic)" : config.httpPublicHost());
@@ -179,6 +172,7 @@ public final class CrownCinema implements CinemaSession.Listener {
 
     @Override public void completed(CinemaSession session, boolean announced) {
         if (!sessions.remove(session.player().getUniqueId(), session)) return;
+        if (pendingVideoPublish != null && running) backendExecutor.execute(this::applyPendingVideo);
         if (announced && session.player().isActive()) {
             Ticket ticket = new Ticket(session.target().getServerInfo().getName(), session.displayName(),
                     Instant.now().plusSeconds(config.ticketSeconds()));
@@ -197,17 +191,19 @@ public final class CrownCinema implements CinemaSession.Listener {
     }
 
     private synchronized boolean start(Player player, RegisteredServer target, String displayName) {
-        if (!running || !policy.supports(player.getProtocolVersion()) || !packs.ready(player)
+        if (!running || pendingVideoPublish != null || !policy.supports(player.getProtocolVersion()) || !packs.ready(player)
                 || sessions.size() >= config.maxViewers() || player.getCurrentServer().isEmpty()) return false;
         var connection = player.getCurrentServer().orElseThrow();
         var mode = serverSettings.mode(connection.getServerInfo().getName());
         debug.record("cinema.request", "player=" + player.getUsername() + " server=" + connection.getServerInfo().getName() + " mode=" + mode + " packReady=" + packs.ready(player));
         if (mode == CinemaConfig.ServerMode.OFF) return false;
+        var clip = videos.snapshot().forServer(target.getServerInfo().getName());
+        debug.record("cinema.video", "target=" + target.getServerInfo().getName() + " video=" + clip.name() + " font=" + clip.font());
         var session = new CinemaSession(player, connection.getServer(), target,
-                displayName, sequence, config.endcardSeconds(), this, logger);
+                displayName, clip.sequence(), config.endcardSeconds(), this, logger, clip.font(), clip.sound());
         if (sessions.putIfAbsent(player.getUniqueId(), session) != null) return false;
         try {
-            if (mode == CinemaConfig.ServerMode.BRIDGE) bridge.start(session, connection, (int) sequence.duration().toSeconds() + config.endcardSeconds() + 5);
+            if (mode == CinemaConfig.ServerMode.BRIDGE) bridge.start(session, connection, (int) clip.sequence().duration().toSeconds() + config.endcardSeconds() + 5);
             else room.spawnPlayer(player, session);
             proxy.getScheduler().buildTask(this, session::startupTimeout).delay(Duration.ofSeconds(10)).schedule();
             return true;
@@ -216,6 +212,23 @@ public final class CrownCinema implements CinemaSession.Listener {
             session.finish(false);
             return false;
         }
+    }
+
+    private synchronized void whenPlaybackIdle(Runnable publish) {
+        if (!running) return;
+        if (sessions.isEmpty()) publish.run();
+        else pendingVideoPublish = publish;
+    }
+
+    private synchronized void applyPendingVideo() {
+        if (!running || !sessions.isEmpty() || pendingVideoPublish == null) return;
+        Runnable publish = pendingVideoPublish; pendingVideoPublish = null; publish.run();
+    }
+
+    private void catalogInstalled(VideoCatalog catalog) {
+        boolean changed = packs.install(catalog.pack());
+        debug.record("video.updated", "default=" + catalog.defaultClip().name() + " clips=" + catalog.clips().size() + " packChanged=" + changed);
+        if (changed) for (var player : proxy.getAllPlayers()) schedulePackOffer(player);
     }
 
     private synchronized void serverModeChanged(RegisteredServer server,CinemaConfig.ServerMode mode) {
@@ -233,6 +246,8 @@ public final class CrownCinema implements CinemaSession.Listener {
 
     @Subscribe public void shutdown(ProxyShutdownEvent event) {
         running = false;
+        pendingVideoPublish = null;
+        if (videos != null) videos.close();
         List.copyOf(sessions.values()).forEach(s -> s.finish(false));
         if (http != null) http.close();
         if (room != null) room.dispose();
@@ -254,6 +269,19 @@ public final class CrownCinema implements CinemaSession.Listener {
             if (args.length == 1 && args[0].equalsIgnoreCase("join")) { join(source); return; }
             if (args.length >= 1 && args[0].equalsIgnoreCase("pack")) { pack(source, args); return; }
             if (!source.hasPermission("crowncinema.admin")) { message(source, "You do not have permission."); return; }
+            if (args.length == 0 || args[0].equalsIgnoreCase("menu") || args[0].equalsIgnoreCase("gui")) {
+                try {
+                    debug.record("gui.request", "source=" + source.getClass().getName() + " protocol=" + (source instanceof Player p ? p.getProtocolVersion() : "console"));
+                    if (args.length == 4 && args[1].equalsIgnoreCase("mode")) {
+                        serverAdmin.execute(source, new String[]{"server", args[2], args[3]});
+                        dialogs.open(source, new String[]{"gui", "server", args[2]});
+                    } else {
+                        boolean opened = dialogs.open(source, args); debug.record("gui.open", "opened=" + opened);
+                        if (!opened) serverAdmin.execute(source, new String[]{"servers"});
+                    }
+                } catch (RuntimeException | java.io.IOException e) { logger.warn("Could not open admin dialog", e); message(source, "Could not open dialog; use /crowncinema servers or /crowncinema video list."); }
+                return;
+            }
             if (args.length >= 1 && args[0].equalsIgnoreCase("video")) { video(source, args); return; }
             if (args.length == 2 && args[0].equalsIgnoreCase("debug") && List.of("on", "off").contains(args[1].toLowerCase(java.util.Locale.ROOT))) {
                 try { debug.set(args[1].equalsIgnoreCase("on")); message(source, "Debug " + (debug.enabled() ? "enabled" : "disabled") + ". Log: plugins/crowncinema/debug.log (maximum 2 MiB plus one rotated file)."); }
@@ -264,7 +292,7 @@ public final class CrownCinema implements CinemaSession.Listener {
                 serverAdmin.execute(source,args); return;
             }
             if (args.length >= 1 && args.length <= 2 && args[0].equalsIgnoreCase("status")) {
-                message(source, "Video: " + videoName + " | Debug: " + debug.enabled());
+                message(source, "Video: " + videos.snapshot().defaultClip().name() + " | Import running: " + videos.busy() + " | Debug: " + debug.enabled());
                 message(source, "Pack download: " + (config.packUrl() != null ? config.packUrl() : http != null
                         ? "self-hosted, port " + http.port() : "disabled") + " | Viewers: " + sessions.size()
                         + " | SHA-1: " + packs.hash());
@@ -275,6 +303,7 @@ public final class CrownCinema implements CinemaSession.Listener {
                     message(source, "Backend packs: " + packs.backendStatusOf(p));
                     message(source, "Saved pack preference: " + packs.preference(p));
                     message(source, "Playback on this server: " + p.getCurrentServer().map(s -> serverSettings.mode(s.getServerInfo().getName()).name()).orElse("OFF"));
+                    message(source, "Video for this target server: " + p.getCurrentServer().map(c -> videos.snapshot().forServer(c.getServerInfo().getName()).name()).orElse("none"));
                     message(source, "Download URL: " + config.packUrlFor(p.getVirtualHost().map(a -> a.getHostString()).orElse(null)));
                 }
                 return;
@@ -302,18 +331,32 @@ public final class CrownCinema implements CinemaSession.Listener {
                         + " skipped (server mode, client, pack, active session or viewer limit). Backends can reject bridge requests.");
                 return;
             }
-            message(source, "/crowncinema servers | server <name> <off|proxy|bridge> | announce <server> [display name] | preview <server> [display name] | stop <player|all> | status [player] | video <list|use filename|default> | debug <on|off> | pack <on|off|ask>");
+            message(source, "/crowncinema servers | server <name> <off|proxy|bridge> | announce <server> [display name] | preview <server> [display name] | stop <player|all> | status [player] | video <list|import file|use file|server name file|reload|unload file|default> | debug <on|off> | pack <on|off|ask>");
         }
 
         private void video(CommandSource source, String[] args) {
             try {
                 if (args.length == 2 && args[1].equalsIgnoreCase("list")) {
-                    message(source, "Active: " + videoName + " | Available in plugins/crowncinema/videos/: " + videos.list()); return;
+                    var state = videos.snapshot();
+                    message(source, "Active: " + state.defaultClip().name() + " | Available in plugins/crowncinema/videos/: " + videos.list());
+                    message(source, "Loaded: " + state.clips().keySet() + " | Server videos: " + state.servers() + " | Import running: " + videos.busy()); return;
                 }
-                if (args.length == 2 && args[1].equalsIgnoreCase("default")) videos.select("builtin");
-                else if (args.length >= 3 && args[1].equalsIgnoreCase("use")) videos.select(String.join(" ", Arrays.copyOfRange(args, 2, args.length)));
-                else { message(source, "/crowncinema video list | use <filename> | default"); return; }
-                message(source, "Video selection saved. Restart Velocity to import the video and offer its updated resource pack.");
+                if (config.packUrl() != null || !config.httpEnabled()) { message(source, "Live video updates require pack.url empty and pack.http.enabled=true."); return; }
+                String action, name = "", server = "";
+                if (args.length == 2 && args[1].equalsIgnoreCase("default")) { action = "use"; name = "builtin"; }
+                else if (args.length == 2 && args[1].equalsIgnoreCase("reload")) action = "reload";
+                else if (args.length >= 3 && List.of("use", "import", "unload").contains(args[1].toLowerCase(java.util.Locale.ROOT))) {
+                    action = args[1].toLowerCase(java.util.Locale.ROOT); name = String.join(" ", Arrays.copyOfRange(args, 2, args.length));
+                } else if (args.length >= 4 && args[1].equalsIgnoreCase("server")) {
+                    var target = proxy.getServer(args[2]);
+                    if (target.isEmpty()) { message(source, "Unknown Velocity server: " + args[2]); return; }
+                    action = "server"; server = target.orElseThrow().getServerInfo().getName().toLowerCase(java.util.Locale.ROOT);
+                    name = String.join(" ", Arrays.copyOfRange(args, 3, args.length));
+                } else { message(source, "/crowncinema video list | import <file> | use <file> | server <server> <file|default> | reload | unload <file> | default"); return; }
+                videos.update(action, name, server, text -> {
+                    if (!(source instanceof Player player) || player.isActive()) message(source, text);
+                    debug.record("video.import", text);
+                });
             } catch (java.io.IOException e) { message(source, "Video selection failed: " + e.getMessage()); }
         }
 
@@ -364,15 +407,21 @@ public final class CrownCinema implements CinemaSession.Listener {
                 var commands = new java.util.ArrayList<String>();
                 commands.add("join");
                 if (pack) commands.add("pack");
-                if (admin) commands.addAll(List.of("servers","server","menu","announce", "preview", "status", "stop", "video", "debug"));
+                if (admin) commands.addAll(List.of("servers","server","menu","gui","announce", "preview", "status", "stop", "video", "debug"));
                 return commands;
             }
             if (args.length == 2 && args[0].equalsIgnoreCase("pack") && pack) return List.of("on", "off", "ask");
             if (!admin) return List.of();
             if (args.length == 2 && args[0].equalsIgnoreCase("debug")) return List.of("on", "off");
-            if (args.length == 2 && args[0].equalsIgnoreCase("video")) return List.of("list", "use", "default");
-            if (args.length >= 3 && args[0].equalsIgnoreCase("video") && args[1].equalsIgnoreCase("use")) {
+            if (args.length == 2 && args[0].equalsIgnoreCase("video")) return List.of("list", "import", "use", "server", "reload", "unload", "default");
+            if (args.length >= 3 && args[0].equalsIgnoreCase("video") && List.of("use", "import", "unload").contains(args[1].toLowerCase(java.util.Locale.ROOT))) {
                 try { return videos.list(); } catch (java.io.IOException e) { return List.of(); }
+            }
+            if (args.length == 3 && args[0].equalsIgnoreCase("video") && args[1].equalsIgnoreCase("server"))
+                return proxy.getAllServers().stream().map(server -> server.getServerInfo().getName()).toList();
+            if (args.length >= 4 && args[0].equalsIgnoreCase("video") && args[1].equalsIgnoreCase("server")) {
+                try { var names = new java.util.ArrayList<>(videos.list()); names.add("default"); names.add("builtin"); return names; }
+                catch (java.io.IOException e) { return List.of("default", "builtin"); }
             }
             if (args.length == 2 && (args[0].equalsIgnoreCase("announce") || args[0].equalsIgnoreCase("preview") || args[0].equalsIgnoreCase("server")))
                 return proxy.getAllServers().stream().map(s -> s.getServerInfo().getName()).filter(n -> n.startsWith(args[1])).toList();

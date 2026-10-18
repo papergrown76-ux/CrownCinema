@@ -37,6 +37,7 @@ class PackServiceTest {
         Properties p = new Properties(); p.setProperty("pack.url", "https://example.com/cinema.zip");
         service = new PackService(proxy, CinemaConfig.from(p),
                 new ClientPolicy(ProtocolVersion.MINIMUM_VERSION, ProtocolVersion.MAXIMUM_VERSION), directory, retries::add);
+        when(own.getHash()).thenReturn(java.util.HexFormat.of().parseHex(service.hash()));
         player = mock(Player.class);
         when(player.getUniqueId()).thenReturn(UUID.randomUUID());
         when(player.isActive()).thenReturn(true);
@@ -59,7 +60,7 @@ class PackServiceTest {
                 new ClientPolicy(ProtocolVersion.MINIMUM_VERSION, ProtocolVersion.MAXIMUM_VERSION), directory);
         when(player.getVirtualHost()).thenReturn(Optional.of(InetSocketAddress.createUnresolved("play.example.org", 25565)));
         automatic.offer(player);
-        verify(proxy).createResourcePackBuilder("http://play.example.org:8124/crown-cinema.zip");
+        verify(proxy).createResourcePackBuilder("http://play.example.org:8124/crown-cinema.zip?v=" + automatic.hash());
         verify(builder).setHash(java.util.HexFormat.of().parseHex(automatic.hash()));
         verify(player).sendResourcePackOffer(own);
     }
@@ -159,6 +160,17 @@ class PackServiceTest {
         var ownRemoval = new ServerResourcePackRemoveEvent(PackService.PACK_ID, backend);
         service.protect(ownRemoval);
         assertFalse(ownRemoval.getResult().isAllowed());
+    }
+    @Test void hotUpdateWaitsForTheNewHashAndNeverRemovesBackendPacks() throws Exception {
+        var old = own; when(player.getAppliedResourcePacks()).thenReturn(List.of(old)); assertTrue(service.ready(player));
+        Path file = directory.resolve("new.zip"); java.nio.file.Files.writeString(file, "new resource pack");
+        var next = PackService.Payload.load(file); assertTrue(service.install(next)); assertFalse(service.ready(player));
+        service.offer(player); verify(player).removeResourcePacks(PackService.PACK_ID); verify(player).sendResourcePackOffer(own);
+        service.status(new PlayerResourcePackStatusEvent(player, PackService.PACK_ID, PlayerResourcePackStatusEvent.Status.SUCCESSFUL, old));
+        assertFalse(service.ready(player), "A stale successful response must not start a new video");
+        var updated = mock(ResourcePackInfo.class); when(updated.getId()).thenReturn(PackService.PACK_ID); when(updated.getHash()).thenReturn(next.digest());
+        when(player.getAppliedResourcePacks()).thenReturn(List.of(updated)); assertTrue(service.ready(player));
+        assertNotNull(service.download(next.hash())); assertFalse(service.install(next));
     }
     private ResourcePackInfo pack(ResourcePackInfo.Origin origin) {
         ResourcePackInfo pack = mock(ResourcePackInfo.class);

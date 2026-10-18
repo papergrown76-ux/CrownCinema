@@ -13,8 +13,8 @@ import zipfile
 def main():
     pack=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'src/main/resources/cinema/crown-cinema.zip'
     with zipfile.ZipFile(pack) as archive:
-        font=json.loads(archive.read('assets/crowncinema/font/movie.json'))
-    glyphs=sum(sum(sum(c!='\0' for c in row) for row in p.get('chars',[])) for p in font['providers'])
+        fonts=[json.loads(archive.read(name)) for name in archive.namelist() if name.startswith('assets/crowncinema/font/') and name.endswith('.json')]
+    glyphs=sum(sum(sum(c!='\0' for c in row) for row in p.get('chars',[])) for font in fonts for p in font['providers'])
     target=ROOT/'.deps/minecraft-26.3-validation'
     libs=target/'libs';libs.mkdir(parents=True,exist_ok=True)
     manifest=json.loads(fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json'))

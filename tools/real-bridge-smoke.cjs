@@ -2,6 +2,7 @@
 // Real Paper 26.2 regression test. Resource-pack application remains simulated.
 const mc=require('minecraft-protocol');
 const fs=require('node:fs');const path=require('node:path');const assert=require('node:assert/strict');
+const nbt=require('prismarine-nbt');
 const crypto=require('node:crypto');const {spawn}=require('node:child_process');
 const root=path.resolve(__dirname,'..');const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const actors=[];let stopping=false,failed;const logs={paper:'',proxy:''};
@@ -25,7 +26,7 @@ async function until(check,label,timeout=15000){
 }
 function connect(name,version){
  const client=mc.createClient({host:'127.0.0.1',port:25565,username:name,version,auth:'offline'});
- const r={client,name,version,positions:[],titles:[],sounds:[],abilities:[],logins:0,correct:false,corrected:0,done:false};actors.push(r);
+ const r={client,name,version,positions:[],titles:[],sounds:[],abilities:[],logins:0,chat:[],dialogs:[],packOffers:[],correct:false,corrected:0,done:false};actors.push(r);
  client.on('error',e=>{if(!stopping&&!r.done)failed=e});
  client.on('end',reason=>{if(!stopping&&!r.done)failed=Error(name+' disconnected: '+JSON.stringify(reason))});
  client.on('login',()=>r.logins++);
@@ -37,16 +38,19 @@ function connect(name,version){
  });
  client.on('set_title_text',p=>r.titles.push(p));client.on('entity_sound_effect',p=>r.sounds.push(p));
  client.on('abilities',p=>r.abilities.push(p));
+ client.on('system_chat',p=>r.chat.push(JSON.stringify(typeof p.content==='string'?p.content:nbt.simplify(p.content))));
+ client.on('show_dialog',p=>r.dialogs.push(nbt.simplify(p.dialog.data)));
  client.on('add_resource_pack',p=>{
+  r.packOffers.push(p);
   downloads.push(fetch(p.url).then(async response=>{assert.equal(response.status,200);const data=Buffer.from(await response.arrayBuffer());assert.equal(crypto.createHash('sha1').update(data).digest('hex'),p.hash)}));
   for(const result of [3,4,0])client.write('resource_pack_receive',{uuid:p.uuid,result});
  });
  return r;
 }
 function near(a,b){return a&&b&&Math.abs(a.x-b.x)+Math.abs(a.y-b.y)+Math.abs(a.z-b.z)<.05}
-async function start(r,correction=false){
+async function start(r,correction=false,target='lobby'){
  const mark={positions:r.positions.length,titles:r.titles.length,sounds:r.sounds.length};r.correct=correction;
- proxy.stdin.write('crowncinema announce lobby Real Paper Test\n');
+ proxy.stdin.write('crowncinema announce '+target+' Real Paper Test\n');
  await until(()=>r.positions.slice(mark.positions).some(p=>p.y===72)&&r.titles.length>mark.titles+2,'start '+r.name);
  return mark;
 }
@@ -59,6 +63,15 @@ async function returned(r,mark,timeout=15000){
 async function run(){
  await until(()=>logs.paper.includes('Done (')&&logs.proxy.includes('Done ('),'Paper and Velocity startup',90000);
  console.log('PASS: real Paper 26.2 + ViaVersion/ViaBackwards 5.12.1 and Velocity started');
+ if(process.argv.includes('--gui-only')) {
+  proxy.stdin.write('crowncinema debug on\n');
+  const gui=connect('BridgeNew'+runId,'26.1');await until(()=>gui.positions.length>0,'GUI test join');await sleep(1700);
+  gui.client.chat('/crowncinema gui');
+  await until(()=>gui.dialogs.length>0,'GUI-only dialog');await sleep(100);
+  gui.client.chat(gui.dialogs[0].actions.find(x=>x.label==='Server settings').action.command);
+  await until(()=>gui.dialogs.length===2,'GUI-only navigation');console.log(JSON.stringify(gui.dialogs));return;
+ }
+
  const legacy=connect('BridgeOld'+runId,'1.20.4');
  await until(()=>legacy.positions.length>0,'legacy join');legacy.origin=legacy.positions.at(-1);await sleep(1700);
  assert.notEqual(legacy.origin.y,72,'test must begin outside the cinema world');
@@ -81,6 +94,9 @@ async function run(){
  assert(fs.readFileSync(path.join(root,'build/real-paper-bridge/plugins/CrownCinemaBackend/recovery.yml'),'utf8').includes(legacy.client.uuid));
  await returned(legacy,mark,8000);
  console.log('PASS: vetoed return keeps protection/recovery and retries successfully after the veto clears');
+ legacy.client.chat('/crowncinema menu');
+ await until(()=>legacy.chat.some(x=>x.includes('Crown Cinema - Servers')),'legacy chat-menu fallback');
+ assert.equal(legacy.dialogs.length,0);
  legacy.done=true;legacy.client.end('Legacy test complete');await sleep(350);
  const modern=connect('BridgeNew'+runId,'26.1');
  await until(()=>modern.positions.length>0,'modern join');modern.origin=modern.positions.at(-1);await sleep(1700);
@@ -88,15 +104,52 @@ async function run(){
  mark=await start(modern,true);await returned(modern,mark);
  assert(modern.titles.length-mark.titles>80);assert.equal(modern.sounds.length-mark.sounds,1);
  console.log('PASS: modern 26.1 protocol client also survives the same-room teleport on Paper 26.2');
+ modern.client.chat('/crowncinema gui');
+ await until(()=>modern.dialogs.length===1,'native vanilla settings dialog');
+ assert.equal(modern.dialogs[0].type,'minecraft:multi_action');assert.equal(modern.dialogs[0].pause,0);
+ const serversButton=modern.dialogs[0].actions.find(x=>x.label==='Server settings');assert(serversButton);
+ await sleep(100); // Model a human click; respect Velocity's command rate limit.
+ modern.client.chat(serversButton.action.command);
+ await until(()=>modern.dialogs.length===2,'dialog button opens server overview');
+ assert(modern.dialogs[1].actions.some(x=>x.label.includes('lobby')));
+ console.log('PASS: native vanilla dialog arrives on 26.1; navigation commands work and 1.20.4 falls back to chat');
+ const own=path.join(root,'build/real-bridge-proxy/plugins/crowncinema');
+ fs.copyFileSync(path.join(root,'src/test/resources/h264-aac.mp4'),path.join(own,'videos/live intro.mp4'));
+ const oldOffer=modern.packOffers.at(-1);const beforeOffers=modern.packOffers.length;
+ mark=await start(modern);
+ const beforeChat=modern.chat.length;
+ modern.client.chat('/crowncinema video server lobby live intro.mp4');
+ await until(()=>modern.chat.slice(beforeChat).some(x=>x.includes('Combining video resources')),'background import progress');
+ assert.equal(modern.packOffers.length,beforeOffers,'active playback must not be interrupted by a pack update');
+ await returned(modern,mark);
+ await until(()=>modern.chat.slice(beforeChat).some(x=>x.includes('Video update complete'))&&modern.packOffers.length>beforeOffers,'live catalog publication and refreshed pack');
+ const newOffer=modern.packOffers.at(-1);assert.notEqual(newOffer.hash,oldOffer.hash);
+ const oldData=Buffer.from(await (await fetch(oldOffer.url)).arrayBuffer());
+ assert.equal(crypto.createHash('sha1').update(oldData).digest('hex'),oldOffer.hash,'old in-flight URLs must retain the old bytes');
+ await sleep(700);
+ mark=await start(modern);await returned(modern,mark);
+ const mappedFrames=modern.titles.slice(mark.titles).filter(x=>nbt.simplify(x.text).font);
+ assert(mappedFrames.length>=10&&mappedFrames.length<=20,'mapped one-second video must replace the six-second default');
+ const mappedFont=nbt.simplify(mappedFrames[0].text).font;
+ assert(modern.sounds.at(-1).sound.data.soundName.startsWith('crowncinema:video_clip_'));
+ mark=await start(modern,false,'launch');await returned(modern,mark);
+ const defaultFrames=modern.titles.slice(mark.titles).filter(x=>nbt.simplify(x.text).font);
+ assert(defaultFrames.length>80);assert.notEqual(nbt.simplify(defaultFrames[0].text).font,mappedFont);
+ const noReload=modern.packOffers.length;const messagesBefore=modern.chat.length;
+ modern.client.chat('/crowncinema video use live intro.mp4');
+ await until(()=>modern.chat.slice(messagesBefore).some(x=>x.includes('Video update complete')),'switch default without restart');
+ await sleep(1200);assert.equal(modern.packOffers.length,noReload,'selecting an already imported video must not reload the pack');
+ console.log('PASS: asynchronous import waits for active playback, updates the pack live, isolates per-target clips and reuses loaded resources');
  await Promise.all(downloads);
  assert(logs.proxy.includes('Video: test-pattern.mp4'),'real proxy must load the imported synthetic MP4');
  console.log('PASS: real proxy imports a custom MP4 and serves the exact generated pack hash over HTTP');
  const sha256=file=>crypto.createHash('sha256').update(fs.readFileSync(path.join(root,file))).digest('hex');
  fs.writeFileSync(path.join(root,'build/real-bridge-result.json'),JSON.stringify({passed:true,paper:'26.2 build 134',clientVersions:['1.20.4','26.1'],
   proxySha256:sha256('target/crown-cinema.jar'),backendSha256:sha256('backend-bridge/target/crown-cinema-backend.jar'),
-  customVideoImportVerified:true,visualClientTest:false,packApplicationSimulated:true,finishedAt:new Date().toISOString()},null,2)+'\n');
+  customVideoImportVerified:true,liveVideoUpdatesVerified:true,vanillaDialogVerified:true,visualClientTest:false,packApplicationSimulated:true,finishedAt:new Date().toISOString()},null,2)+'\n');
 }
 run().catch(e=>{console.error(e.stack);process.exitCode=1}).finally(async()=>{
+ fs.writeFileSync(path.join(root,'build/real-bridge-actor-diagnostics.json'),JSON.stringify(actors.map(r=>({name:r.name,version:r.version,chat:r.chat,dialogs:r.dialogs})),null,2));
  stopping=true;for(const r of actors){r.done=true;r.client.end('Test complete')}
  for(const [child,command]of[[proxy,'shutdown\n'],[paper,'stop\n']]){
   if(child.exitCode===null){child.stdin.write(command);await Promise.race([new Promise(r=>child.once('exit',r)),sleep(10000)]);if(child.exitCode===null)child.kill('SIGTERM')}

@@ -16,15 +16,15 @@ final class CinemaAudio {
 
     private CinemaAudio() { }
 
-    static void play(LimboPlayer player) {
+    static void play(LimboPlayer player, Key sound) {
         // Velocity's one-argument Audience.playSound is a no-op. Its emitter
         // overload also requires a backend connection, absent in our Limbo.
         // Use Velocity's own version-aware encoder through LimboAPI instead.
         player.writePacketAndFlush(new ClientboundSoundEntityPacket(
-                Sound.sound(SOUND, Sound.Source.MASTER, 0.8f, 1), null, LIMBO_PLAYER_ID));
+                Sound.sound(sound, Sound.Source.MASTER, 0.8f, 1), null, LIMBO_PLAYER_ID));
     }
 
-    static void stop(LimboPlayer player) {
-        player.writePacketAndFlush(new ClientboundStopSoundPacket(SoundStop.namedOnSource(SOUND, Sound.Source.MASTER)));
+    static void stop(LimboPlayer player, Key sound) {
+        player.writePacketAndFlush(new ClientboundStopSoundPacket(SoundStop.namedOnSource(sound, Sound.Source.MASTER)));
     }
 }

@@ -29,8 +29,8 @@ final class VideoLibrary {
         Path readme = videos.resolve("README.txt");
         if (!Files.exists(readme)) Files.writeString(readme,
                 "Drop an MP4/WebM/MOV/MKV here. FFmpeg is included for Linux x86-64 and ARM64; no separate installation needed.\n"
-                + "One file is selected automatically on restart. Multiple files: /crowncinema video list,\n"
-                + "/crowncinema video use <filename>, then restart Velocity. /crowncinema video default restores the demo.\n"
+                + "One file is selected automatically on startup. Multiple files: /crowncinema video list,\n"
+                + "/crowncinema video use <filename> imports and switches live. /crowncinema video default restores the demo.\n"
                 + "The first 12 seconds are imported at 960x540, 12 fps (configurable 1-20 fps).\n"
                 + "Input limit: 250 MiB; generated resource pack limit: 90 MiB. Silent videos stay silent.\n"
                 + "Keep pack.url empty and pack.http.enabled=true for automatic hosting.\n", StandardCharsets.UTF_8);
@@ -57,7 +57,7 @@ final class VideoLibrary {
         return path.toAbsolutePath();
     }
 
-    private Properties settings() throws IOException {
+    Properties settings() throws IOException {
         Properties result = new Properties();
         try (var reader = Files.newBufferedReader(settings, StandardCharsets.UTF_8)) { result.load(reader); }
         return result;
@@ -83,6 +83,12 @@ final class VideoLibrary {
             selection = files.getFirst();
         }
         if (selection.equals("builtin")) return new Prepared(Sequence.load(), null, "Neutral demo");
+        return prepare(selection, ignored -> { });
+    }
+
+    Prepared prepare(String selection, java.util.function.Consumer<String> progress) throws IOException {
+        if (selection.equals("builtin")) return new Prepared(Sequence.load(), null, "Neutral demo");
+        Properties values = settings();
         Path source = input(selection);
         int fps;
         try { fps = Integer.parseInt(values.getProperty("fps", "12").trim()); }
@@ -96,6 +102,7 @@ final class VideoLibrary {
         Path work = Files.createTempDirectory(cache.getParent(), "import-");
         try {
             String binary = BundledFfmpeg.resolve(directory, values.getProperty("ffmpeg", "auto").trim());
+            progress.accept("Extracting video frames: " + selection);
             int maxFrames = 12 * fps;
             run(binary, work, "frames.log", List.of("-protocol_whitelist", "file,pipe", "-i", source.toString(),
                     "-map", "0:v:0", "-an", "-sn", "-dn", "-t", "12", "-vf",
@@ -105,6 +112,7 @@ final class VideoLibrary {
             while (frames < maxFrames && Files.exists(work.resolve(String.format(Locale.ROOT, "frame_%04d.png", frames + 1)))) frames++;
             Sequence sequence = new Sequence(frames, fps, FIRST, 4, 3, TRACKING, RESET);
             String duration = String.format(Locale.ROOT, "%.6f", frames / (double) fps);
+            progress.accept("Converting audio: " + selection);
             boolean audio = run(binary, work, "audio.log", List.of("-protocol_whitelist", "file,pipe", "-i", source.toString(),
                     "-map", "0:a:0", "-vn", "-sn", "-dn", "-t", duration, "-af", "apad", "-ar", "48000", "-ac", "2",
                     "-c:a", "libvorbis", "-q:a", "5", work.resolve("video.ogg").toString()), true);
@@ -114,6 +122,7 @@ final class VideoLibrary {
                 run(binary, work, "silence.log", List.of("-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", duration,
                         "-c:a", "libvorbis", work.resolve("video.ogg").toString()), false);
             }
+            progress.accept("Building video assets: " + selection);
             buildPack(work, frames);
             Properties metadata = new Properties();
             metadata.setProperty("frames", Integer.toString(frames)); metadata.setProperty("fps", Integer.toString(fps));

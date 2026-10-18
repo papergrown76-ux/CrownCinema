@@ -7,6 +7,8 @@ import shutil
 import sys
 import urllib.parse
 import subprocess
+import zipfile
+import json
 from bootstrap import ROOT, verified, VELOCITY_URL, VELOCITY_SHA256
 
 
@@ -53,6 +55,12 @@ login-ratelimit = 0
         config.write_text(config.read_text().replace('lobby = "127.0.0.1:25566"','lobby = "127.0.0.1:25576"'))
         own=plugins/'crowncinema';own.mkdir(exist_ok=True)
         (own/'config.properties').write_text('pack.url=\npack.http.bind=127.0.0.1\npack.http.port=28124\ncinema.server.lobby=bridge\ncinema.endcard-seconds=1\n',encoding='utf-8')
+        # Explicitly grant the named protocol-test actor admin rights, only in this isolated runtime.
+        fixture=ROOT/'build/test-permissions';fixture.mkdir(exist_ok=True)
+        subprocess.run([str(ROOT/'.tools/jdk/bin/javac'),'-proc:none','-cp',str(velocity),'-d',str(fixture),str(ROOT/'tools/CinemaTestPermissions.java')],check=True)
+        with zipfile.ZipFile(plugins/'cinema-test-permissions.jar','w') as archive:
+            archive.write(fixture/'de/crown/test/CinemaTestPermissions.class','de/crown/test/CinemaTestPermissions.class')
+            archive.writestr('velocity-plugin.json',json.dumps({'id':'cinema-test-permissions','name':'Isolated test permissions','version':'0','main':'de.crown.test.CinemaTestPermissions'}))
         videos=own/'videos';videos.mkdir(exist_ok=True)
         binary=ROOT/'.deps/ffmpeg/bin/linux-x86_64/ffmpeg'
         subprocess.run([str(binary),'-nostdin','-v','error','-y','-f','lavfi','-i','color=c=blue:s=320x180:r=20:d=6',
